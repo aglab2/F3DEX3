@@ -1492,7 +1492,6 @@ tri_skip_flat_shading:
 .endif
     // 52 cycles
     vrcp    $v20[2], tPosMmH[1]
-    lb      $20, (alphaCompareCullMode)($zero)
     vrcph   $v22[2], tPosMmH[1]
     lw      $5, VTX_INV_W_VEC($1) // $5, $7, $8 = 1/W for H, M, L
     vrcp    $v20[3], tPosLmH[1]
@@ -1508,21 +1507,7 @@ tri_skip_flat_shading:
     vmudl   $v29, $v20, v30_0020
     // no nop if tri_skip_flip_facing was unaligned
     vmadm   $v22, $v22, v30_0020
-    beqz    $20, tri_skip_alpha_compare_cull
-     vmadn  $v20, $v31, $v31[2] // 0
-    // Alpha compare culling
-    vge     $v26, tHAtI, tMAtI
-    lbu     $19, alphaCompareCullThresh
-    vlt     $v27, tHAtI, tMAtI
-    bgtz    $20, @@skip1
-     vge    $v26, $v26, tLAtI // If alphaCompareCullMode > 0, $v26 = max of 3 verts
-    vlt     $v26, $v27, tLAtI // else if < 0, $v26 = min of 3 verts
-@@skip1: // $v26 elem 3 has max or min alpha value
-    mfc2    $24, $v26[6]
-    sub     $24, $24, $19 // sign bit set if (max/min) < thresh
-    xor     $24, $24, $20 // invert sign bit if other cond. Sign bit set -> cull
-    bltz    $24, return_and_end_mat // if max < thresh or if min >= thresh.
-tri_skip_alpha_compare_cull:
+    vmadn  $v20, $v31, $v31[2] // 0
     // 63 cycles
     vmudm   tPosCatF, tPosCatI, v30_1000
     // no nop if tri_skip_alpha_compare_cull was unaligned
