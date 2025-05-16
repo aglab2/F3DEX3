@@ -1904,7 +1904,7 @@ vClFade2 equ $v2
     ldv     $v4[8], VTX_FRAC_VEC($3)         // Vtx off screen, frac pos
     bnez    $11, clip_w              // If so, use 1 or -1
      ldv    $v5[8], VTX_INT_VEC ($3)         // Vtx off screen, int pos
-    vmudh   $v29, $v29, $v31[3]              // elem 0 is (1 or -1) * 2 (clip ratio)
+    vmudh   $v29, $v29, $v28[3]              // elem 0 is (1 or -1) * 2 (clip ratio)
     andi    $11, clipMaskIdx, 2              // Conditions 2 (-x) or 3 (+x)
     vmudm   vClBaseF, vOne, $v4[0h]          // Set accumulator (care about 3, 7) to X
     bnez    $11, clip_skipy
@@ -2302,10 +2302,10 @@ vtx_store_for_clip:
     vmov    sKPF[1], sCLZ[2]
     sbv     sKPG[7],  (VTX_COLOR_A + 8 - vtxSize)($20) // ...which gets overwritten below
 // sSCF is $v20 // vtx_store Scaled Clipping Frac
-    vmudn   sSCF, vPairTPosF, $v31[3]        // W * clip ratio for scaled clipping
+    vmudn   sSCF, vPairTPosF, $v28[3]        // W * clip ratio for scaled clipping
     ssv     sCLZ[12], (VTX_SCR_Z      )(secondVtxPos)
 // sSCI is $v21 // vtx_store Scaled Clipping Int
-    vmadh   sSCI, vPairTPosI, $v31[3]        // W * clip ratio for scaled clipping
+    vmadh   sSCI, vPairTPosI, $v28[3]        // W * clip ratio for scaled clipping
     slv     sKPI[8],  (VTX_SCR_VEC    )(secondVtxPos)
     vrcph   $v29[0], s1WI[3]
     slv     sKPI[0],  (VTX_SCR_VEC    )($19)
@@ -2482,9 +2482,9 @@ vtx_store_for_clip:
     sdv     vPairTPosF[0],    (VTX_FRAC_VEC  )(outputVtxPos)
     vrcph   sRTI[7], $v31[2] // 0
     sdv     vPairTPosI[8],    (VTX_INT_VEC   )(secondVtxPos)
-    vmudn   sSCF, vPairTPosF, $v31[3] // W * clip ratio for scaled clipping
+    vmudn   sSCF, vPairTPosF, $v28[3] // W * clip ratio for scaled clipping
     sdv     vPairTPosI[0],    (VTX_INT_VEC   )(outputVtxPos)
-    vmadh   sSCI, vPairTPosI, $v31[3] // W * clip ratio for scaled clipping
+    vmadh   sSCI, vPairTPosI, $v28[3] // W * clip ratio for scaled clipping
     slv     vPairST[8],       (VTX_TC_VEC    )(secondVtxPos)
     vmudl   $v29, s1WF, sRTF[2h]
     slv     vPairST[0],       (VTX_TC_VEC    )(outputVtxPos)
