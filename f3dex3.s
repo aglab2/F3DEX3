@@ -519,6 +519,7 @@ jumpTableEntry G_MOVEMEM_end  // G_MOVEMEM, G_MTX (load)
 
 // RDP/Immediate Command Mini Table
 // 1 byte per entry, after << 2 points to an addr in first 1/4 of IMEM
+miniTableEntry G_TRI3_handler
 miniTableEntry G_FLUSH_handler
 miniTableEntry G_MEMSET_handler
 miniTableEntry G_DMA_IO_handler
@@ -1357,6 +1358,34 @@ tLPos equ $v10
 tPosMmH equ $v6
 tPosLmH equ $v8
 tPosHmM equ $v11
+
+G_TRI3_handler:
+    lui     $1, 0xffc0
+    ori     $1, $1, 0xc0c0
+    and     $2, cmd_w0, $1      // 2 = xxxxxxxx dd000000 gg000000 ff000000
+    and     $3, cmd_w1_dram, $1 // 3 = aaaaaa00 bb!!!!00 cc!!!!00 ee000000
+    srl     $4, $3, 5           // 4 = 00000aaa aaa00bb! !!!00cc! !!!00ee0
+    srl     $3, $3, 9           // 3 = 00000000 0aaaaaa0 0bb!!!!0 0cc!!!!0
+    srl     $5, $2, 11          // 5 = 00000000 000xxxxx xxxdd000 000gg000
+    andi    $5, $5, 0x1818      // 5 = 00000000 00000000 000dd000 000gg000
+    or      $3, $3, $5          // 3 = 00000000 0aaaaaa0 0bbdd!!0 0ccgg!!0
+    andi    $4, $4, 0x0006      // 4 = 00000000 00000000 00000000 00000ee0
+    or      $3, $3, $4          // 3 = 00000000 0aaaaaa0 0bbdd!!0 0ccggee0
+    sll     $5, $2, 3           // 5 = xxxxxdd0 00000dd0 00000ff0 00000000
+    andi    $5, $5, 0x0600      // 5 = 00000000 00000000 00000ff0 00000000
+    or      $3, $3, $5          // 3 = 00000000 0aaaaaa0 0bbddff0 0ccggee0
+
+    nor     $1, $1, $zero
+    and     cmd_w0, cmd_w0, $1
+    and     cmd_w1_dram, cmd_w1_dram, $1
+    sll     cmd_w1_dram, cmd_w1_dram, 1
+    sll     cmd_w0, cmd_w0, 1
+    sw      cmd_w1_dram, (inputBufferEnd - 4)(inputBufferPos)
+
+    jal     tri_main
+     sw     $3, 4(rdpCmdBufPtr) // Store third tri indices
+
+    lw      cmd_w1_dram, (inputBufferEnd - 4)(inputBufferPos)
 
 G_TRI2_handler:
 G_QUAD_handler:
