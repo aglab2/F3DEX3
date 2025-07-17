@@ -1360,30 +1360,26 @@ tPosLmH equ $v8
 tPosHmM equ $v11
 
 G_TRI3_handler:
-    lui     $1, 0xffc0
-    ori     $1, $1, 0xc0c0
-    and     $2, cmd_w0, $1      // 2 = xxxxxxxx dd000000 gg000000 ff000000
-    and     $3, cmd_w1_dram, $1 // 3 = aaaaaa00 bb!!!!00 cc!!!!00 ee000000
-    srl     $4, $3, 5           // 4 = 00000aaa aaa00bb! !!!00cc! !!!00ee0
-    srl     $3, $3, 9           // 3 = 00000000 0aaaaaa0 0bb!!!!0 0cc!!!!0
-    srl     $5, $2, 11          // 5 = 00000000 000xxxxx xxxdd000 000gg000
-    andi    $5, $5, 0x1818      // 5 = 00000000 00000000 000dd000 000gg000
-    or      $3, $3, $5          // 3 = 00000000 0aaaaaa0 0bbdd!!0 0ccgg!!0
-    andi    $4, $4, 0x0006      // 4 = 00000000 00000000 00000000 00000ee0
-    or      $3, $3, $4          // 3 = 00000000 0aaaaaa0 0bbdd!!0 0ccggee0
-    sll     $5, $2, 3           // 5 = xxxxxdd0 00000dd0 00000ff0 00000000
-    andi    $5, $5, 0x0600      // 5 = 00000000 00000000 00000ff0 00000000
-    or      $3, $3, $5          // 3 = 00000000 0aaaaaa0 0bbddff0 0ccggee0
+    lui     $1, 0xff81
+    ori     $1, $1, 0x8181
+    and     $2, cmd_w0, $1      // 2 = 11010011 0000000D d000000e e000000h
+    and     $3, cmd_w1_dram, $1 // 3 = aaaaaa0b b000000c c000000f F000000g
+    srl     $4, $3, 10          // 4 = xxxxxxxx xxxxxxxx 0bb!!!!0 0cc!!!!0
+    srl     $5, $2, 6           // 5 = xxxxxxxx xxxxxxxx 00000dd0 00000ee0
+    or      $4, $4, $5          // 4 = xxxxxxxx xxxxxxxx 0bb!!dd0 0cc!!ee0
+    sll     $5, $3, 4           // 5 = xxxxxxxx xxxxxxxx 000ff000 000g0000
+    or      $4, $4, $5          // 4 = xxxxxxxx xxxxxxxx 0bbffdd0 0ccg!ee0
+    sll     $5, $2, 3           // 4 = xxxxxxxx xxxxxxxx 0000ee00 0000h000
+    xor     $4, $4, $5          // 4 = xxxxxxxx xxxxxxxx 0bbfFDd0 0ccghee0
+    sh      $4, 6(rdpCmdBufPtr)
+    srl     $5, $3, 25          // 5 = 00000000 00000000 00000000 0aaaaaa0
+    sb      $5, 5(rdpCmdBufPtr)
 
     nor     $1, $1, $zero
     and     cmd_w0, cmd_w0, $1
     and     cmd_w1_dram, cmd_w1_dram, $1
-    sll     cmd_w1_dram, cmd_w1_dram, 1
-    sll     cmd_w0, cmd_w0, 1
-    sw      cmd_w1_dram, (inputBufferEnd - 4)(inputBufferPos)
-
-    jal     tri_main
-     sw     $3, 4(rdpCmdBufPtr) // Store third tri indices
+    jal     tri_main // tri3 is already stored in
+     sw      cmd_w1_dram, (inputBufferEnd - 4)(inputBufferPos)
 
     lw      cmd_w1_dram, (inputBufferEnd - 4)(inputBufferPos)
 
