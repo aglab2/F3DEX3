@@ -3,6 +3,9 @@
  * @brief Modded GBI for use with F3DEX3 custom microcode
  */
 
+#define NO_SYNCS_IN_TEXTURE_LOADS
+#define RISKY_RDP_SYNCS
+
 /* List of options; the documentation for each is where it is used below. */
 /* #define REQUIRE_SEMICOLONS_AFTER_GBI_COMMANDS */ /* recommended */
 /* #define NO_SYNCS_IN_TEXTURE_LOADS */ /* see documentation */
@@ -10,8 +13,6 @@
 /* #define DISABLE_AA */ /* developer taste */
 /* #define RISKY_RDP_SYNCS */ /* see documentation */
 /* #define KAZE_GBI_HACKS */ /* not recommended unless you are Kaze */
-
-#include "ultra64/mbi.h"
 
 #ifndef F3DEX3_H
 #define F3DEX3_H
@@ -618,16 +619,30 @@ longer a multiple of 8 (DMA word). This was not used in any command anyway. */
 #define G_CK_KEY            (1 << G_MDSFT_COMBKEY)
 
 /* G_SETOTHERMODE_H gSetColorDither */
+#if 1
 #define G_CD_MAGICSQ        (0 << G_MDSFT_RGBDITHER)
 #define G_CD_BAYER          (1 << G_MDSFT_RGBDITHER)
 #define G_CD_NOISE          (2 << G_MDSFT_RGBDITHER)
 #define G_CD_DISABLE        (3 << G_MDSFT_RGBDITHER)
+#else
+#define G_CD_MAGICSQ        (3 << G_MDSFT_RGBDITHER)
+#define G_CD_BAYER          (3 << G_MDSFT_RGBDITHER)
+#define G_CD_NOISE          (3 << G_MDSFT_RGBDITHER)
+#define G_CD_DISABLE        (3 << G_MDSFT_RGBDITHER)
+#endif
 
 /* G_SETOTHERMODE_H gSetAlphaDither */
+#if 0
 #define G_AD_PATTERN        (0 << G_MDSFT_ALPHADITHER)
 #define G_AD_NOTPATTERN     (1 << G_MDSFT_ALPHADITHER)
 #define G_AD_NOISE          (2 << G_MDSFT_ALPHADITHER)
 #define G_AD_DISABLE        (3 << G_MDSFT_ALPHADITHER)
+#else
+#define G_AD_PATTERN        (3 << G_MDSFT_ALPHADITHER)
+#define G_AD_NOTPATTERN     (3 << G_MDSFT_ALPHADITHER)
+#define G_AD_NOISE          (3 << G_MDSFT_ALPHADITHER)
+#define G_AD_DISABLE        (3 << G_MDSFT_ALPHADITHER)
+#endif
 
 /* G_SETOTHERMODE_L gSetAlphaCompare */
 #define G_AC_NONE           (0 << G_MDSFT_ALPHACOMPARE)
@@ -647,9 +662,11 @@ between a manually written rendermode using IM_RD for transparency and one using
 it for antialiasing. */
 #define AA_DEF 0
 #define RD_DEF 0
+#define AA_XLU_DEF AA_EN
 #else
 #define AA_DEF AA_EN
 #define RD_DEF IM_RD
+#define AA_XLU_DEF AA_EN
 #endif
 
 /* G_SETOTHERMODE_L gSetRenderMode */
@@ -699,7 +716,7 @@ it for antialiasing. */
     GBL_c##clk(G_BL_CLR_IN, G_BL_A_IN, G_BL_CLR_MEM, G_BL_A_MEM)
 
 #define RM_AA_ZB_XLU_SURF(clk)                                  \
-    AA_DEF | Z_CMP | IM_RD | CVG_DST_WRAP | CLR_ON_CVG |        \
+    AA_XLU_DEF | Z_CMP | IM_RD | CVG_DST_WRAP | CLR_ON_CVG |        \
     FORCE_BL | ZMODE_XLU |                                      \
     GBL_c##clk(G_BL_CLR_IN, G_BL_A_IN, G_BL_CLR_MEM, G_BL_1MA)
 
@@ -714,7 +731,7 @@ it for antialiasing. */
     GBL_c##clk(G_BL_CLR_IN, G_BL_A_IN, G_BL_CLR_MEM, G_BL_A_MEM)
 
 #define RM_AA_ZB_XLU_DECAL(clk)                                 \
-    AA_DEF | Z_CMP | IM_RD | CVG_DST_WRAP | CLR_ON_CVG |        \
+    AA_XLU_DEF | Z_CMP | IM_RD | CVG_DST_WRAP | CLR_ON_CVG |        \
     FORCE_BL | ZMODE_DEC |                                      \
     GBL_c##clk(G_BL_CLR_IN, G_BL_A_IN, G_BL_CLR_MEM, G_BL_1MA)
 
@@ -729,12 +746,12 @@ it for antialiasing. */
     GBL_c##clk(G_BL_CLR_IN, G_BL_A_IN, G_BL_CLR_MEM, G_BL_A_MEM)
 
 #define RM_AA_ZB_XLU_INTER(clk)                                 \
-    AA_DEF | Z_CMP | IM_RD | CVG_DST_WRAP | CLR_ON_CVG |        \
+    AA_XLU_DEF | Z_CMP | IM_RD | CVG_DST_WRAP | CLR_ON_CVG |        \
     FORCE_BL | ZMODE_INTER |                                    \
     GBL_c##clk(G_BL_CLR_IN, G_BL_A_IN, G_BL_CLR_MEM, G_BL_1MA)
 
 #define RM_AA_ZB_XLU_LINE(clk)                                  \
-    AA_DEF | Z_CMP | IM_RD | CVG_DST_CLAMP | CVG_X_ALPHA |      \
+    AA_XLU_DEF | Z_CMP | IM_RD | CVG_DST_CLAMP | CVG_X_ALPHA |      \
     ALPHA_CVG_SEL | FORCE_BL | ZMODE_XLU |                      \
     GBL_c##clk(G_BL_CLR_IN, G_BL_A_IN, G_BL_CLR_MEM, G_BL_1MA)
 
@@ -791,12 +808,12 @@ it for antialiasing. */
     GBL_c##clk(G_BL_CLR_IN, G_BL_A_IN, G_BL_CLR_MEM, G_BL_A_MEM)
 
 #define RM_AA_XLU_SURF(clk)                                     \
-    AA_DEF | IM_RD | CVG_DST_WRAP | CLR_ON_CVG | FORCE_BL |     \
+    AA_XLU_DEF | IM_RD | CVG_DST_WRAP | CLR_ON_CVG | FORCE_BL |     \
     ZMODE_OPA |                                                 \
     GBL_c##clk(G_BL_CLR_IN, G_BL_A_IN, G_BL_CLR_MEM, G_BL_1MA)
 
 #define RM_AA_XLU_LINE(clk)                                     \
-    AA_DEF | IM_RD | CVG_DST_CLAMP | CVG_X_ALPHA |              \
+    AA_XLU_DEF | IM_RD | CVG_DST_CLAMP | CVG_X_ALPHA |              \
     ALPHA_CVG_SEL | FORCE_BL | ZMODE_OPA |                      \
     GBL_c##clk(G_BL_CLR_IN, G_BL_A_IN, G_BL_CLR_MEM, G_BL_1MA)
 
@@ -855,7 +872,7 @@ it for antialiasing. */
     GBL_c##clk(G_BL_CLR_IN, G_BL_A_IN, G_BL_CLR_MEM, G_BL_1MA)
 
 #define RM_ZB_CLD_SURF(clk)                                     \
-    Z_CMP | IM_RD | CVG_DST_SAVE | FORCE_BL | ZMODE_XLU |       \
+    AA_XLU_DEF | Z_CMP | IM_RD | CVG_DST_SAVE | FORCE_BL | ZMODE_XLU |       \
     GBL_c##clk(G_BL_CLR_IN, G_BL_A_IN, G_BL_CLR_MEM, G_BL_1MA)
 
 #define RM_ZB_OVL_SURF(clk)                                     \
@@ -882,7 +899,7 @@ it for antialiasing. */
     GBL_c##clk(G_BL_CLR_IN, G_BL_0, G_BL_CLR_IN, G_BL_1)
 
 #define RM_CLD_SURF(clk)                                        \
-    IM_RD | CVG_DST_SAVE | FORCE_BL | ZMODE_OPA |               \
+    AA_XLU_DEF | IM_RD | CVG_DST_SAVE | FORCE_BL | ZMODE_OPA |               \
     GBL_c##clk(G_BL_CLR_IN, G_BL_A_IN, G_BL_CLR_MEM, G_BL_1MA)
 
 #define RM_PCL_SURF(clk)                                        \
@@ -2352,7 +2369,7 @@ _DW({                                               \
 /**
  * Normal control flow commands; same as @ref gsSPBranchListHint but with hint of 0
  */
-#define gsSPBranchList(    dl)  _gsSPBranchListRaw(     dl, 0)
+#define gsSPBranchList(    dl)  _gsSPBranchListRaw(     dl, _DLHINTVALUE(sizeof(dl) / 8))
 
 /**
  * Normal control flow commands; same as @ref gSPEndDisplayListHint but with hint of 0
@@ -2595,6 +2612,46 @@ _DW({                                                                   \
     __gsSP1Triangle_w1f(v00, v01, v02, flag0)),                     \
     __gsSP1Triangle_w1f(v10, v11, v12, flag1)                       \
 }
+
+#define TRI3_BIT(v, s1, s2) _SHIFTL((v)>>s1, s2, 1)
+#define TRI3_BITX(v, s1, xv, xs1, s2) _SHIFTL(((v)>>s1) ^ ((xv)>>xs1), s2, 1)
+#define TRI3_BIT2(v, s1, s2) _SHIFTL((v)>>s1, s2, 2)
+
+/*
+11010011 0000000D d000000e e000000h
+aaaaaa0b b000000c c000000f F000000g
+
+F = f ^ e1
+D = d ^ e0
+
+v20=aaaaaa
+v21=bbfFDd
+v22=ccghee
+*/
+
+/**
+ * 3 Triangles
+ */
+#define gSP3Triangles(pkt, v00, v01, v02, v10, v11, v12, v20, v21, v22)                                \
+    _DW({                                                                                              \
+        Gfx *_g = (Gfx *) (pkt);                                                                       \
+        _g->words.w0 = (_SHIFTL(G_TRI3, 24, 8) | __gsSP1Triangle_w1(v00, v01, v02)                     \
+                        | TRI3_BITX(v21, 1, v22, 0, 16) | TRI3_BIT(v21, 0, 15) | TRI3_BIT2(v22, 0, 7)  \
+                        | TRI3_BIT(v22, 2, 0));                                                        \
+        _g->words.w1 = (__gsSP1Triangle_w1(v10, v11, v12) | _SHIFTL(v20, 26, 6)                        \
+                        | TRI3_BIT2(v21, 4, 23) | TRI3_BIT2(v22, 4, 15) | TRI3_BIT(v21, 3, 8)          \
+                        | TRI3_BITX(v21, 2, v22, 1, 7) | TRI3_BIT(v22, 3, 0));                         \
+    })
+
+/**
+ * @copydetails gSP3Triangles
+ */
+#define gsSP3Triangles(v00, v01, v02, v10, v11, v12, v20, v21, v22)                                    \
+    { (_SHIFTL(G_TRI3, 24, 8) | __gsSP1Triangle_w1(v00, v01, v02) | TRI3_BITX(v21, 1, v22, 0, 16)      \
+       | TRI3_BIT(v21, 0, 15) | TRI3_BIT2(v22, 0, 7) | TRI3_BIT(v22, 2, 0)),                           \
+      (__gsSP1Triangle_w1(v10, v11, v12) | _SHIFTL(v20, 26, 6) | TRI3_BIT2(v21, 4, 23)                 \
+       | TRI3_BIT2(v22, 4, 15) | TRI3_BIT(v21, 3, 8) | TRI3_BITX(v21, 2, v22, 1, 7)                    \
+       | TRI3_BIT(v22, 3, 0)) }
 
 /*
  * 5 Triangles base commands
@@ -3676,10 +3733,15 @@ _DW({                                                       \
 #define gsDPSetColorDither(mode)        \
     gsSPSetOtherMode(    G_SETOTHERMODE_H, G_MDSFT_RGBDITHER, 2, mode)
 
+#if 0
 #define gDPSetAlphaDither(pkt, mode)    \
     gSPSetOtherMode(pkt, G_SETOTHERMODE_H, G_MDSFT_ALPHADITHER, 2, mode)
 #define gsDPSetAlphaDither(mode)        \
     gsSPSetOtherMode(    G_SETOTHERMODE_H, G_MDSFT_ALPHADITHER, 2, mode)
+#else
+#define gDPSetAlphaDither(...) gSPNoOp(pkt)
+#define gsDPSetAlphaDither(...) gsSPNoOp()
+#endif
 
 /**
  * 'blendmask' is not supported anymore.
@@ -3693,10 +3755,20 @@ _DW({                                                       \
  */
 #define gsDPSetBlendMask(mask)      gsSPNoOp()
 
+#if 0
 #define gDPSetAlphaCompare(pkt, type)   \
     gSPSetOtherMode(pkt, G_SETOTHERMODE_L, G_MDSFT_ALPHACOMPARE, 2, type)
 #define gsDPSetAlphaCompare(type)       \
     gsSPSetOtherMode(    G_SETOTHERMODE_L, G_MDSFT_ALPHACOMPARE, 2, type)
+#else
+#define gDPSetAlphaCompare(pkt, type) gSPNoOp(pkt)
+#define gsDPSetAlphaCompare(type) gsSPNoOp()
+
+#define gDPSetAlphaCompareReal(pkt, type)   \
+    gSPSetOtherMode(pkt, G_SETOTHERMODE_L, G_MDSFT_ALPHACOMPARE, 2, type)
+#define gsDPSetAlphaCompareReal(type)       \
+    gsSPSetOtherMode(    G_SETOTHERMODE_L, G_MDSFT_ALPHACOMPARE, 2, type)
+#endif
 
 #define gDPSetDepthSource(pkt, src) \
     gSPSetOtherMode(pkt, G_SETOTHERMODE_L, G_MDSFT_ZSRCSEL, 1, src)
