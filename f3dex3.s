@@ -236,13 +236,17 @@ otherMode0: // command byte included, same as above
 otherMode1:
     .dw 0x00000000
 
+// TODO: This is unnecessary, the state only has to be saved between the two
+// commands making up the texrect command. Could put this in the part of the
+// clip buffer that's kept over yields.
 // Saved texrect state for combining the multiple input commands into one RDP texrect command
 texrectWord1:
     .fill 4 // first word, has command byte, xh and yh
 texrectWord2:
     .fill 4 // second word, has tile, xl, yl
 
-// First half of RDP value for split commands; overwritten by numLightsxSize
+// First half of RDP value for split commands. Also used as temp storage for
+// tri vertices during tri commands.
 rdpHalf1Val:
     .fill 4
     
@@ -520,6 +524,8 @@ jumpTableEntry G_MOVEMEM_end  // G_MOVEMEM, G_MTX (load)
 // RDP/Immediate Command Mini Table
 // 1 byte per entry, after << 2 points to an addr in first 1/4 of IMEM
 miniTableEntry G_TRI3_handler
+miniTableEntry G_LIGHTTORDP_handler
+miniTableEntry G_RELSEGMENT_handler
 miniTableEntry G_FLUSH_handler
 miniTableEntry G_MEMSET_handler
 miniTableEntry G_DMA_IO_handler
@@ -573,10 +579,7 @@ miniTableEntry G_BRANCH_WZ_handler
 miniTableEntry G_TRI1_handler
 miniTableEntry G_TRI2_handler
 miniTableEntry G_QUAD_handler
-miniTableEntry G_TRISTRIP_handler
-miniTableEntry G_TRIFAN_handler
-miniTableEntry G_LIGHTTORDP_handler
-miniTableEntry G_RELSEGMENT_handler
+miniTableEntry G_TRISNAKE_handler
 
 
 // The maximum number of generated vertices in a clip polygon. In reality, this
@@ -1162,6 +1165,8 @@ ovl01_end:
 displaylist_dma_with_count:
     andi    inputBufferPos, cmd_w0, 0x00F8             // Byte 3, how many cmds to drop from load (max 0xA0)
 displaylist_dma:
+    li      $ra, run_next_DL_command
+displaylist_dma_tri_snake:
     // Load INPUT_BUFFER_SIZE_BYTES - inputBufferPos cmds (inputBufferPos >= 0, mult of 8)
     addi    inputBufferPos, inputBufferPos, -INPUT_BUFFER_SIZE_BYTES // inputBufferPos = - num cmds
 .if CFG_PROFILING_A
@@ -1315,6 +1320,7 @@ G_MODIFYVTX_handler:
     j       do_moveword  // Moveword adds cmd_w0 to $10 for final addr
      lbu    cmd_w0, (inputBufferEnd - 0x07)(inputBufferPos)  // offset in vtx, bit 15 clear
 
+
 G_VTX_handler:
     lhu     dmemAddr, (vertexTable)(cmd_w0)    // (v0 + n) end address; up to 56 inclusive
     jal     segmented_to_physical              // Convert address in cmd_w1_dram to physical
@@ -1324,26 +1330,29 @@ G_VTX_handler:
     j       dma_read_write
      li     $ra, 0x8000 | vtx_after_dma        // Negative = flag to not to return to clipping in vtx_setup_constants
 
-G_TRIFAN_handler:
-    li      $1, 0x8000 // $ra negative = flag for G_TRIFAN
-G_TRISTRIP_handler:
-    addi    $ra, $1, tri_strip_fan_loop // otherwise $1 == 0
-    addi    cmd_w0, inputBufferPos, inputBufferEnd - 8 // Start pointing to cmd byte
-tri_strip_fan_loop:
-    lw      cmd_w1_dram, 0(cmd_w0)       // Load tri indices to lower 3 bytes of word
-    addi    $11, inputBufferPos, inputBufferEnd - 3 // Off end of command
-    beq     $11, cmd_w0, tris_end         // If off end of command, exit
-     sll    $10, cmd_w1_dram, 24         // Put sign bit of vtx 3 in sign bit
-    bltz    $10, tris_end                 // If negative, exit
-     sw     cmd_w1_dram, 4(rdpCmdBufPtr) // Store non-shuffled indices
-    bltz    $ra, tri_fan_store           // Finish handling G_TRIFAN
-     addi   cmd_w0, cmd_w0, 1            // Increment
-    andi    $11, cmd_w0, 1               // If odd, this is the 1st/3rd/5th tri
-    bnez    $11, tri_main                // Draw as is
-     srl    $10, cmd_w1_dram, 8          // Move vtx 2 to LSBs
-    sb      cmd_w1_dram, 6(rdpCmdBufPtr) // Store vtx 3 to spot for 2
+
+// Index = bits 1-6; direction flag = bit 0; end flag = bit 7
+// CM 02 01 03 04 05 06 07
+//               [bb^cc]   Indices b and c
+//                  |
+//                  cmd_w0 + inputBufferEnd
+G_TRISNAKE_handler:
+    sw      cmd_w0, rdpHalf1Val          // Store indices a, b, c
+    addi    inputBufferPos, inputBufferPos, -5 // Point to byte 3, index c of 1st tri
+tri_snake_loop:
+    lh      $3, (inputBufferEnd - 1)(inputBufferPos) // Load indices b and c
+tri_snake_loop_from_input_buffer:
+    lb      $2, rdpHalf1Val + 1          // Old v1; == index b, except when bridging between old and new load
+    li      $ra, tri_snake_loop          // For tri_main
+    bltz    $3, tri_snake_end            // Upper bit of real index b set = done
+     andi   $11, $3, 1                   // Get direction flag from index c
+    beqz    inputBufferPos, tri_snake_over_input_buffer // == 0 at end of input buffer
+     andi   $3, $3, 0x7E                 // Mask out flags from index c
+    sb      $3, rdpHalf1Val + 1          // Store index c as vertex 1
+    sb      $2, (rdpHalf1Val + 2)($11)   // Store old v1 as 2 if dir clear or 3 if set
     j       tri_main
-     sb     $10, 7(rdpCmdBufPtr)         // Store vtx 2 to spot for 3
+     addi   inputBufferPos, inputBufferPos, 1  // Increment indices being read
+    
 
 // H = highest on screen = lowest Y value; then M = mid, L = low
 tHAtF equ $v5
@@ -1386,15 +1395,15 @@ G_TRI3_handler:
 G_TRI2_handler:
 G_QUAD_handler:
     jal     tri_main                     // Send second tri; return here for first tri
-     sw     cmd_w1_dram, 4(rdpCmdBufPtr) // Store second tri indices
+     sw     cmd_w1_dram, rdpHalf1Val     // Store second tri indices
 G_TRI1_handler:
-    li      $ra, tris_end                 // After done with this tri, exit tri processing
-    sw      cmd_w0, 4(rdpCmdBufPtr)      // Store first tri indices
+    li      $ra, tris_end                // After done with this tri, exit tri processing
+    sw      cmd_w0, rdpHalf1Val          // Store first tri indices
 tri_main:
-    lpv     $v27[0], 0(rdpCmdBufPtr) // To vector unit
-    lbu     $1, 5(rdpCmdBufPtr)
-    lbu     $2, 6(rdpCmdBufPtr)
-    lbu     $3, 7(rdpCmdBufPtr)
+    lpv     $v27[4], (rdpHalf1Val)($zero)      // To vector unit in elems 5-7
+    lbu     $1, rdpHalf1Val+1
+    lbu     $2, rdpHalf1Val+2
+    lbu     $3, rdpHalf1Val+3
     vclr    vZero
     lhu     $1, (vertexTable)($1)
     vmudn   $v29, vOne, v30_VB    // Address of vertex buffer
@@ -1812,11 +1821,6 @@ tri_culled_by_occlusion_plane:
 return_and_end_mat:
     jr      $ra
      sb     $zero, materialCullMode // This covers all tri early exits except clipping
-
-tri_fan_store:
-    lb      $11, (inputBufferEnd - 7)(inputBufferPos) // Load vtx 1
-    j       tri_main
-     sb     $11, 5(rdpCmdBufPtr)         // Store vtx 1
 
 .if (. & 4)
     .warning "One instruction of padding before ovl234"
@@ -2848,6 +2852,19 @@ G_MTX_end:
 mtx_multiply:
     instantiate_mtx_multiply
 .endif
+
+tri_snake_end:
+    addi    inputBufferPos, inputBufferPos, 7 // Round up to whole input command
+    addi    $11, $zero, 0xFFF8           // Sign-extend; andi is zero-extend!
+    j       tris_end
+     and    inputBufferPos, inputBufferPos, $11 // inputBufferPos has to be negative
+
+tri_snake_over_input_buffer:
+    j       displaylist_dma_tri_snake    // inputBufferPos is now 0; load whole buffer
+     li     $ra, tri_snake_ret_from_input_buffer
+tri_snake_ret_from_input_buffer:
+    j       tri_snake_loop_from_input_buffer // inputBufferPos pointing to first byte loaded
+     lbu    $3, (inputBufferEnd)(inputBufferPos) // Load c; clear real index b sign bit -> don't exit
 
 
 .if CFG_PROFILING_B
