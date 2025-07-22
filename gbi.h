@@ -2792,21 +2792,21 @@ _DW({                                                                  \
  */
 #define gSPTriStrip(pkt, v1, v2, v3, v4, v5, v6, v7)          \
     gSPTriSnake(pkt, v1, v2,                                  \
-        v3 | ((v4 & 0x80) ? G_SNAKE_LAST : 0),                \
-        v4 | ((v5 & 0x80) ? G_SNAKE_LAST : 0), G_SNAKE_LEFT,  \
-        v5 | ((v6 & 0x80) ? G_SNAKE_LAST : 0), G_SNAKE_RIGHT, \
-        v6 | ((v7 & 0x80) ? G_SNAKE_LAST : 0), G_SNAKE_LEFT,  \
-        v7, G_SNAKE_RIGHT)
+        v3 | ((v4 < 0) ? G_SNAKE_LAST : 0),                \
+        v4 | ((v5 < 0) ? G_SNAKE_LAST : 0), G_SNAKE_LEFT,  \
+        v5 | ((v6 < 0) ? G_SNAKE_LAST : 0), G_SNAKE_RIGHT, \
+        v6 | ((v7 < 0) ? G_SNAKE_LAST : 0), G_SNAKE_LEFT,  \
+        v7 | G_SNAKE_LAST, G_SNAKE_RIGHT)
 /**
  * @copydetails gSPTriStrip
  */
 #define gsSPTriStrip(v1, v2, v3, v4, v5, v6, v7)              \
     gsSPTriSnake(v1, v2,                                      \
-        v3 | ((v4 & 0x80) ? G_SNAKE_LAST : 0),                \
-        v4 | ((v5 & 0x80) ? G_SNAKE_LAST : 0), G_SNAKE_LEFT,  \
-        v5 | ((v6 & 0x80) ? G_SNAKE_LAST : 0), G_SNAKE_RIGHT, \
-        v6 | ((v7 & 0x80) ? G_SNAKE_LAST : 0), G_SNAKE_LEFT,  \
-        v7, G_SNAKE_RIGHT)
+        v3 | ((v4 < 0) ? G_SNAKE_LAST : 0),                \
+        v4 | ((v5 < 0) ? G_SNAKE_LAST : 0), G_SNAKE_LEFT,  \
+        v5 | ((v6 < 0) ? G_SNAKE_LAST : 0), G_SNAKE_RIGHT, \
+        v6 | ((v7 < 0) ? G_SNAKE_LAST : 0), G_SNAKE_LEFT,  \
+        v7 | G_SNAKE_LAST, G_SNAKE_RIGHT)
 /**
  * 5 Triangles in fan arrangement. Draws the following tris:
  * v3-v1-v2, v4-v1-v3, v5-v1-v4, v6-v1-v5, v7-v1-v6
@@ -2816,22 +2816,21 @@ _DW({                                                                  \
  */
 #define gSPTriFan(pkt, v1, v2, v3, v4, v5, v6, v7) \
     gSPTriSnake(pkt, v1, v2,                                  \
-        v3 | ((v4 & 0x80) ? G_SNAKE_LAST : 0),                \
-        v4 | ((v5 & 0x80) ? G_SNAKE_LAST : 0), G_SNAKE_RIGHT, \
-        v5 | ((v6 & 0x80) ? G_SNAKE_LAST : 0), G_SNAKE_RIGHT, \
-        v6 | ((v7 & 0x80) ? G_SNAKE_LAST : 0), G_SNAKE_RIGHT, \
-        v7, G_SNAKE_RIGHT)
+        v3 | ((v4 < 0) ? G_SNAKE_LAST : 0),                \
+        v4 | ((v5 < 0) ? G_SNAKE_LAST : 0), G_SNAKE_RIGHT, \
+        v5 | ((v6 < 0) ? G_SNAKE_LAST : 0), G_SNAKE_RIGHT, \
+        v6 | ((v7 < 0) ? G_SNAKE_LAST : 0), G_SNAKE_RIGHT, \
+        v7 | G_SNAKE_LAST, G_SNAKE_RIGHT)
 /**
  * @copydetails gSPTriFan
  */
 #define gsSPTriFan(v1, v2, v3, v4, v5, v6, v7) \
     gsSPTriSnake(v1, v2,                                      \
-        v3 | ((v4 & 0x80) ? G_SNAKE_LAST : 0),                \
-        v4 | ((v5 & 0x80) ? G_SNAKE_LAST : 0), G_SNAKE_RIGHT, \
-        v5 | ((v6 & 0x80) ? G_SNAKE_LAST : 0), G_SNAKE_RIGHT, \
-        v6 | ((v7 & 0x80) ? G_SNAKE_LAST : 0), G_SNAKE_RIGHT, \
-        v7, G_SNAKE_RIGHT)
-
+        v3 | ((v4 < 0) ? G_SNAKE_LAST : 0),                \
+        v4 | ((v5 < 0) ? G_SNAKE_LAST : 0), G_SNAKE_RIGHT, \
+        v5 | ((v6 < 0) ? G_SNAKE_LAST : 0), G_SNAKE_RIGHT, \
+        v6 | ((v7 < 0) ? G_SNAKE_LAST : 0), G_SNAKE_RIGHT, \
+        v7 | G_SNAKE_LAST, G_SNAKE_RIGHT)
 
 /*
  * Moveword commands
