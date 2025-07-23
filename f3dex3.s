@@ -1165,7 +1165,7 @@ ovl01_end:
 displaylist_dma_with_count:
     andi    inputBufferPos, cmd_w0, 0x00F8             // Byte 3, how many cmds to drop from load (max 0xA0)
 displaylist_dma:
-    li      $ra, run_next_DL_command
+    li      $10, run_next_DL_command
 displaylist_dma_tri_snake:
     // Load INPUT_BUFFER_SIZE_BYTES - inputBufferPos cmds (inputBufferPos >= 0, mult of 8)
     addi    inputBufferPos, inputBufferPos, -INPUT_BUFFER_SIZE_BYTES // inputBufferPos = - num cmds
@@ -1178,6 +1178,8 @@ displaylist_dma_tri_snake:
     jal     dma_read_write                             // initiate the DMA read
      addi   dmemAddr, inputBufferPos, inputBufferEnd   // set the address to DMA read to
     sub     taskDataPtr, taskDataPtr, inputBufferPos   // increment the DRAM address to read from next time
+    j       while_wait_dma_busy                         // wait for the DMA read to finish
+     move  $ra, $10
 wait_for_dma_and_run_next_command:
 G_POPMTX_end:
 G_MOVEMEM_end:
@@ -1379,9 +1381,9 @@ G_TRI3_handler:
     or      $4, $4, $5          // 4 = xxxxxxxx xxxxxxxx 0bbffdd0 0ccg!ee0
     sll     $5, $2, 3           // 4 = xxxxxxxx xxxxxxxx 0000ee00 0000h000
     xor     $4, $4, $5          // 4 = xxxxxxxx xxxxxxxx 0bbfFDd0 0ccghee0
-    sh      $4, 6(rdpCmdBufPtr)
+    sh      $4, rdpHalf1Val+2
     srl     $5, $3, 25          // 5 = 00000000 00000000 00000000 0aaaaaa0
-    sb      $5, 5(rdpCmdBufPtr)
+    sb      $5, rdpHalf1Val+1
 
     nor     $1, $1, $zero
     and     cmd_w0, cmd_w0, $1
@@ -2860,7 +2862,7 @@ tri_snake_end:
 
 tri_snake_over_input_buffer:
     j       displaylist_dma_tri_snake    // inputBufferPos is now 0; load whole buffer
-     li     $ra, tri_snake_ret_from_input_buffer
+     li     $10, tri_snake_ret_from_input_buffer
 tri_snake_ret_from_input_buffer:
     j       tri_snake_loop_from_input_buffer // inputBufferPos pointing to first byte loaded
      lbu    $3, (inputBufferEnd)(inputBufferPos) // Load c; clear real index b sign bit -> don't exit
