@@ -13,6 +13,11 @@
     addi    reg, $zero, imm
 .endmacro
 
+.macro lix, reg, imm
+    lui   reg, ((imm) >> 16) & 0xffff
+    ori   reg, reg, (imm) & 0xffff
+.endmacro
+
 .macro move, dst, src
     ori     dst, src, 0
 .endmacro
@@ -1299,11 +1304,43 @@ G_BRANCH_WZ_handler:
     instantiate_branch_wz
     
 G_MEMSET_handler:
-    instantiate_memset
+    li      $2, do_memset
+    j flush_handler
+     move   $3, cmd_w1_dram
 
+// We want to use memset to clear fb or zb with the correct word
+// Conveniently, we can use a stride of 4 lines for clearing
+do_memset:
+    lix     $4, (16 << 20) | ((2 - 1) << 12) | (312*2 - 1)
+    li      $2, 320*2*2
+
+    llv     $v2[0], (rdpHalf1Val)($zero) // Load the memset value
+    sll     cmd_w0, cmd_w0, 8           // Clear upper byte
+    addiu   cmd_w1_dram, $3, 8
+    vmudh   $v2, vOne, $v2[1]           // Move element 1 (lower bytes) to all
+    srl     cmd_w0, cmd_w0, 8           // Number of bytes to memset (must be mult of 16)
+
+    li      $3, memsetBufferStart + 0x10
+    li      $5, memsetBufferStart + 312*2*2
+@@pre_loop:
+    sqv     $v2, (-0x10)($5)
+    bne     $5, $3, @@pre_loop
+     addi   $5, -0x10
+
+@@transaction_loop:
+    li      dmemAddr, 0x8000 | memsetBufferStart  // Always write from start of buffer
+    jal     dma_read_write
+     move   dmaLen, $4
+    sub     cmd_w0, cmd_w0, $2
+    bgtz    cmd_w0, @@transaction_loop
+     add    cmd_w1_dram, cmd_w1_dram, $2
+    j       wait_for_dma_and_run_next_command
+     nop
 .endif
 
 G_FLUSH_handler:
+    li      $2, run_next_DL_command
+flush_handler:
     jal     flush_rdp_buffer        // Flush once to push partial DMEM buf to FIFO
      sub    dmemAddr, rdpCmdBufPtr, rdpCmdBufEndP1 // Prereq; offset buffer fullness
     // If the DMEM buffer was empty, dmemAddr will be unchanged and valid for this next
@@ -1313,7 +1350,7 @@ G_FLUSH_handler:
     // DPC_END, and return to $ra. This is why the dmemAddr register (as opposed to,
     // for example, dmaLen) is used as the DMEM buf fullness.
     j       flush_rdp_buffer
-     li     $ra, run_next_DL_command
+     move   $ra, $2
 
 G_LOAD_UCODE_handler:
     j       load_overlay_0_and_enter         // Delay slot is harmless
