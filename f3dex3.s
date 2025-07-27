@@ -13,6 +13,11 @@
     addi    reg, $zero, imm
 .endmacro
 
+.macro lix, reg, imm
+    lui   reg, ((imm) >> 16) & 0xffff
+    ori   reg, reg, (imm) & 0xffff
+.endmacro
+
 .macro move, dst, src
     ori     dst, src, 0
 .endmacro
@@ -314,7 +319,7 @@ v31Value:
 
 /*
 Quick note on Newton-Raphson:
-https://en.wikipedia.org/wiki/Division_algorithm#Newton%E2%80%93Raphson_division
+https://en.wikipedia.org/wiki/Division_algorithm//Newton%E2%80%93Raphson_division
 Given input D, we want to find the reciprocal R. The base formula for refining
 the estimate of R is R_new = R*(2 - D*R). However, since the RSP reciprocal
 instruction moves the radix point 1 to the left, the result has to be multiplied
@@ -692,6 +697,11 @@ rdpCmdBuffer2End:
 rdpCmdBuffer2EndPlus1Word:
     .skip RDP_CMD_BUFSIZE_EXCESS - 8
 
+.notice clipTempVerts
+.notice vertexTable
+.notice tempMatrix
+.notice rdpCmdBuffer1
+
 // Input buffer. After RDP cmd buffers so it can be vector addressed from end.
 inputBuffer:
     .skip INPUT_BUFFER_SIZE_BYTES - INPUT_BUFFER_CLOBBER_OSTASK_AMT
@@ -713,10 +723,19 @@ inputBufferEndSgn equ -(0x1000 - inputBufferEnd) // Underflow DMEM address
 startCounterTime equ (OSTask + OSTask_ucode_size)
 xfrmLookatDirs equ -(0x1000 - (OSTask + OSTask_ucode_data)) // and OSTask_ucode_data_size
 
-memsetBufferStart equ ((vertexBuffer + 0xF) & 0xFF0)
-memsetBufferMaxEnd equ (rdpCmdBuffer1 & 0xFF0)
-memsetBufferMaxSize equ (memsetBufferMaxEnd - memsetBufferStart)
-memsetBufferSize equ (memsetBufferMaxSize > 0x800 ? 0x800 : memsetBufferMaxSize)
+xmemsetBufferStart equ ((vertexBuffer + 0xF) & 0xFF0)
+xmemsetBufferBZeroStart equ ((vertexBuffer + 0x3F) & 0xFC0)
+xmemsetBufferMaxEnd equ (rdpCmdBuffer1 & 0xFF0)
+xmemsetBufferMaxSize equ (memsetBufferMaxEnd - memsetBufferStart)
+xmemsetBufferSize equ (memsetBufferMaxSize > 0x800 ? 0x800 : memsetBufferMaxSize)
+
+memsetBackupSize equ ((vertexBuffer + 0xF) & 0xFF0)
+memsetBufferBZeroStart equ ((memsetBackupSize + 0x3F) & 0xFC0)
+memsetOSTaskBackupStart equ OSTask+0x10
+
+.notice memsetBackupSize
+.notice memsetBufferBZeroStart
+.notice memsetOSTaskBackupStart
 
 ////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////// Register Naming ////////////////////////////////
@@ -1299,11 +1318,16 @@ G_BRANCH_WZ_handler:
     instantiate_branch_wz
     
 G_MEMSET_handler:
-    instantiate_memset
-
+    // We need to perform flush buffers to RDP before memset...
+    // Mind that cmd_w1_dram will be deleted by 'flush_with_ret' so preserve it in $5
+    move    $5, cmd_w1_dram
+    b       flush_with_ret
+     li     $1, do_memset
 .endif
 
 G_FLUSH_handler:
+    li     $1, run_next_DL_command
+flush_with_ret:
     jal     flush_rdp_buffer        // Flush once to push partial DMEM buf to FIFO
      sub    dmemAddr, rdpCmdBufPtr, rdpCmdBufEndP1 // Prereq; offset buffer fullness
     // If the DMEM buffer was empty, dmemAddr will be unchanged and valid for this next
@@ -1313,7 +1337,7 @@ G_FLUSH_handler:
     // DPC_END, and return to $ra. This is why the dmemAddr register (as opposed to,
     // for example, dmaLen) is used as the DMEM buf fullness.
     j       flush_rdp_buffer
-     li     $ra, run_next_DL_command
+     move   $ra, $1
 
 G_LOAD_UCODE_handler:
     j       load_overlay_0_and_enter         // Delay slot is harmless
@@ -1822,6 +1846,89 @@ tri_culled_by_occlusion_plane:
 return_and_end_mat:
     jr      $ra
      sb     $zero, materialCullMode // This covers all tri early exits except clipping
+
+do_memset:
+    // The whole DRAM will be filled with fill short so backup the current progress
+    // The generic solution will be done 'memsetYieldSize', RDP and input buffers must be invalidated
+
+    // original logic to setup 'v2' with fill and unpack the w0/w1
+    llv    $v2[0], (rdpHalf1Val)($zero) // Load the memset value
+    sll    cmd_w0, cmd_w0, 8            // Clear upper byte
+    srl    cmd_w0, cmd_w0, 8            // Number of bytes to memset (must be mult of 16)
+    vmudh  $v2, vOne, $v2[1]            // Move element 1 (lower bytes) to all
+
+    // base for OSTask backup
+    li      $6, 0xBB0
+    lqv     $v6[0], (0)    ($6)
+    lqv     $v7[0], (-0x10)($6)
+    lqv     $v8[0], (-0x20)($6)
+    li      $4, memsetOSTaskBackupStart
+
+    // I am saving 'memsetOSTaskBackupStart' to v3, v4 and v5 interleaved with regular ops for DMEM backup
+    lqv     $v3[0], (0x0 )($4)
+    // We need to rollback input buffer pos - we will zero out inputBufferPos in the End
+    add     taskDataPtr, taskDataPtr, inputBufferPos
+    lqv     $v4[0], (0x10)($4)
+
+    // Backup rest of DMEM - we have a convenient yield data buffer for that
+    lw      cmd_w1_dram, OSTask + OSTask_yield_data_ptr
+    lqv     $v5[0], (0x20)($4)
+    li      dmemAddr, 0x8000 // negative for write + backup from 0
+    jal     dma_read_write
+     li     dmaLen, memsetBackupSize - 1
+
+
+
+
+    // Now start filling the whole DMEM with the clear code. Start from the
+    // end of data, so that we don't risk racing with DMA.
+    // memsetBufferBZeroStart must be aligned on 0x40 boundary
+    li      $1, 0x1000
+    li      $2, 0xC00 //memsetBufferBZeroStart + 0x40
+    addiu   $3, $2, 0xF40 //0x1000
+
+    li      $ra, @@cont
+@@repeat:
+    sqv     $v2, (-0x10)($2)
+    beq     $1, $2, while_wait_dma_busy
+     sqv    $v2, (-0x20)($2)
+@@cont:
+    addiu   $2, 0x40
+    sqv     $v2, (-0x70)($2)
+    bne     $2, $3, @@repeat
+     sqv    $v2, (-0x80)($2)
+
+
+
+
+    // Clear the buffer we are given - it is currently conveniently saved in '$5'
+    // Buffer we would like to clear is either fb or zb which is instantiated with
+    // strides of 220 lines with 312*2 length and 4*2 bytes padding around.
+    // Because 312*2 = 78*8 = 624 bytes, we can conveniently perform the DMA.
+    // Between strides there are 4*2*2 = 16 bytes
+    li      dmemAddr, 0x8000 // how convenient, is it already set?
+    // lix     dmaLen, (16 << 20) | ((220 - 1) << 12) | (624 - 1)
+    lix     dmaLen, ((75 - 1) << 12) | (0x800 - 1)
+    jal     dma_read_write
+    // addiu  cmd_w1_dram, $5, 8
+     addiu  cmd_w1_dram, $5, 0
+    jal     while_wait_dma_busy
+
+    // Restore the mangled data - restore inputBufferPos that will be pulled on next loop...
+     xor    inputBufferPos, inputBufferPos, inputBufferPos
+    // ...and restore DMEM, 'sqv' interleaved with other instructions
+    // mind that the first 'sqv' will store data read to 'cmd_w1_dram'
+    sqv     $v8[0], (-0x20)($6)
+    sqv     $v7[0], (-0x10)($6)
+    sqv     $v6[0], (0)($6)
+    li      dmemAddr, 0 // positive for read + backup from 0
+    sqv     $v5[0], (0x20)($4)
+    li      dmaLen, memsetBackupSize - 1
+    sqv     $v4[0], (0x10)($4)
+    li      $ra, wait_for_dma_and_run_next_command
+    sqv     $v3[0], (0x0 )($4)
+    j       dma_read_write
+     lw     cmd_w1_dram, OSTask + OSTask_yield_data_ptr
 
 .if (. & 4)
     .warning "One instruction of padding before ovl234"
