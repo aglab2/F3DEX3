@@ -482,7 +482,10 @@ lastMatDLPhyAddr:
     
 activeClipPlanes:
     .dh CLIP_SCAL_NPXY | CLIP_CAMPLANE  // Normal tri write, set to zero when clipping
-    
+
+aLight:
+    .db 0,0,0,0, 0,0,0,0
+
 // Constants for clipping algorithm
 clipCondShifts:
     .db CLIP_SCAL_NY_SHIFT
@@ -2360,6 +2363,9 @@ vtx_loop_no_lighting:
     vge     sCLZ, sKPI, $v31[2]              // 0; clamp Z to >= 0
     addi    $1, $1, -2*inputVtxSize         // Decrement vertex count by 2
 vtx_return_from_lighting:
+
+
+
 vtx_store_for_clip:
     vmudl   $v29, vPairTPosF, $v30[3]       // Persp norm
     sub     $20, secondVtxPos, $7           // Points 8 before secondVtxPos if fog, else 0
@@ -3125,6 +3131,7 @@ G_MTX_handler:
 .if CFG_PROFILING_C
     addi    perfCounterC, perfCounterC, 1  // Increment matrix count
 .endif
+    xori    cmd_w0, cmd_w0, G_MTX_MUL_LOAD
     andi    $11, cmd_w0, G_MTX_P_MV | G_MTX_NOPUSH_PUSH // Read the matrix type and push type flags into $11
     bnez    $11, load_mtx                               // If the matrix type is projection or this is not a push, skip pushing the matrix
      andi   $2, cmd_w0, G_MTX_MUL_LOAD                  // Read the matrix load type into $2 (0 is multiply, 2 is load)
