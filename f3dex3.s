@@ -461,9 +461,9 @@ texgenLinearCoeffs:
 // v30[6] & v30[7]
 // stored in top bits to push colors in acc
 aLightAlpha1:
-    .dh 0x7F00
+    .dh 0xFF00
 aLightAlpha2:
-    .dh 0x8000
+    .dh 0x0000
 
 attrOffsetST:
     .dh 0x0100
@@ -587,7 +587,7 @@ miniTableEntry G_TRI1_handler
 miniTableEntry G_TRI2_handler
 miniTableEntry G_QUAD_handler
 miniTableEntry G_TRISNAKE_handler
-miniTableEntry G_TRI3_handler
+miniTableEntry G_ALIGHT_handler
 miniTableEntry G_LIGHTTORDP_handler
 miniTableEntry G_RELSEGMENT_handler
 
@@ -1411,29 +1411,14 @@ tPosMmH equ $v6
 tPosLmH equ $v8
 tPosHmM equ $v11
 
-G_TRI3_handler:
-    lui     $1, 0xff81
-    ori     $1, $1, 0x8181
-    and     $2, cmd_w0, $1      // 2 = 11010011 0000000D d000000e e000000h
-    and     $3, cmd_w1_dram, $1 // 3 = aaaaaa0b b000000c c000000f F000000g
-    srl     $4, $3, 10          // 4 = xxxxxxxx xxxxxxxx 0bb!!!!0 0cc!!!!0
-    srl     $5, $2, 6           // 5 = xxxxxxxx xxxxxxxx 00000dd0 00000ee0
-    or      $4, $4, $5          // 4 = xxxxxxxx xxxxxxxx 0bb!!dd0 0cc!!ee0
-    sll     $5, $3, 4           // 5 = xxxxxxxx xxxxxxxx 000ff000 000g0000
-    or      $4, $4, $5          // 4 = xxxxxxxx xxxxxxxx 0bbffdd0 0ccg!ee0
-    sll     $5, $2, 3           // 4 = xxxxxxxx xxxxxxxx 0000ee00 0000h000
-    xor     $4, $4, $5          // 4 = xxxxxxxx xxxxxxxx 0bbfFDd0 0ccghee0
-    sh      $4, rdpHalf1Val+2
-    srl     $5, $3, 25          // 5 = 00000000 00000000 00000000 0aaaaaa0
-    sb      $5, rdpHalf1Val+1
-
-    nor     $1, $1, $zero
-    and     cmd_w0, cmd_w0, $1
-    and     cmd_w1_dram, cmd_w1_dram, $1
-    jal     tri_main // tri3 is already stored in
-     sw      cmd_w1_dram, (inputBufferEnd - 4)(inputBufferPos)
-
-    lw      cmd_w1_dram, (inputBufferEnd - 4)(inputBufferPos)
+G_ALIGHT_handler:
+    sw cmd_w1_dram, aLight
+    sw cmd_w1_dram, aLight+4
+    sh cmd_w0, aLightAlpha2
+    li $1, 0xff00
+    sub $2, $1, cmd_w0
+    j run_next_DL_command
+    sh $2, aLightAlpha1
 
 G_TRI2_handler:
 G_QUAD_handler:
@@ -2367,13 +2352,17 @@ vtx_loop_no_lighting:
 vtx_return_from_lighting:
 
 aLightImpl:
+    lb $11, aLightAlpha2
     // Mind that colors are bits 14..7. Bit 15 and all small bits are zerod out
     luv       $v18[0], (aLight - altBase)(altBaseReg) // packed load mult
+    beqz $11, @@no_alight
     vmudl     $v17, vPairRGBA, $v30[6]      // acc = rgba*A ; aLightAlpha1
     vmadl     $v29, $v18, $v30[7]           // acc = rgba*A + mult*B ; aLightAlpha2
     vreadacc  $v16, ACC_LOWER               // the results in acc lower
     veq       $v29, $v31, $v31[3h]          // Set VCC to 00010001
     vmrg      vPairRGBA, vPairRGBA, $v16    // in vPairRGBA replace RGB coordinates with v16
+
+@@no_alight:
 
 .notice aLightImpl 
 
