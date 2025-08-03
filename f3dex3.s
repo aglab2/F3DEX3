@@ -457,11 +457,13 @@ perspNorm:
 texgenLinearCoeffs:
     .dh 0x44D3
     .dh 0x6CB3
-    
-fresnelScale:
-    .dh 0x0000
-fresnelOffset:
-    .dh 0x0000
+
+// v30[6] & v30[7]
+// stored in top bits to push colors in acc
+aLightAlpha1:
+    .dh 0x7F00
+aLightAlpha2:
+    .dh 0x8000
 
 attrOffsetST:
     .dh 0x0100
@@ -477,14 +479,14 @@ materialCullMode: // Overwritten to 0 by SPNormalsMode, but that should not
 normalsMode:
     .db 0     // Overwrites materialCullMode
 
+aLight:
+    .db 0xff,0xa5,0x00,0, 0xff,0xa5,0x00,0
+
 lastMatDLPhyAddr:
     .dw 0
     
 activeClipPlanes:
     .dh CLIP_SCAL_NPXY | CLIP_CAMPLANE  // Normal tri write, set to zero when clipping
-
-aLight:
-    .db 0,0,0,0, 0,0,0,0
 
 // Constants for clipping algorithm
 clipCondShifts:
@@ -2364,7 +2366,16 @@ vtx_loop_no_lighting:
     addi    $1, $1, -2*inputVtxSize         // Decrement vertex count by 2
 vtx_return_from_lighting:
 
+aLightImpl:
+    // Mind that colors are bits 14..7. Bit 15 and all small bits are zerod out
+    luv       $v18[0], (aLight - altBase)(altBaseReg) // packed load mult
+    vmudl     $v17, vPairRGBA, $v30[6]      // acc = rgba*A ; aLightAlpha1
+    vmadl     $v29, $v18, $v30[7]           // acc = rgba*A + mult*B ; aLightAlpha2
+    vreadacc  $v16, ACC_LOWER               // the results in acc lower
+    veq       $v29, $v31, $v31[3h]          // Set VCC to 00010001
+    vmrg      vPairRGBA, vPairRGBA, $v16    // in vPairRGBA replace RGB coordinates with v16
 
+.notice aLightImpl 
 
 vtx_store_for_clip:
     vmudl   $v29, vPairTPosF, $v30[3]       // Persp norm
