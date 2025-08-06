@@ -1270,7 +1270,6 @@ branch_dl:
     sw      $3, (displayListStack)($1)
     addi    $1, $1, 4                       // Increment the DL stack length
 call_ret_common:
-    sb      $zero, materialCullMode         // This covers call, branch, return, and cull and branchZ successes
     j       displaylist_dma_with_count
      sb     $1, displayListStackLength
 
@@ -1291,10 +1290,9 @@ G_SETxIMG_handler:
     lb      $3, materialCullMode            // Get current mode
     jal     segmented_to_physical           // Convert image to physical address
      lw     $2, lastMatDLPhyAddr            // Get last material physical addr
-    bnez    $3, G_RDP_handler               // If not in normal mode (0), exit
-     add    $10, taskDataPtr, inputBufferPos // Current material physical addr
-    beq     $10, $2, @@skip                 // Branch if we are executing the same mat again
-     sw     $10, lastMatDLPhyAddr           // Store material physical addr
+    sb      $zero, materialCullMode
+    beq     cmd_w1_dram, $2, @@skip         // Branch if we are executing the same mat again
+     sw     cmd_w1_dram, lastMatDLPhyAddr   // Store material physical addr
     li      $7, 1                           // > 0: in material first time
 @@skip:                                     // Otherwise $7 was < 0: cull mode (in mat second time)
     j       G_RDP_handler
@@ -1625,7 +1623,6 @@ tMnWF equ $v10
     vmudh   t1WF, vOne, t1WI[1q]
     sb      $10, 0x0001(rdpCmdBufPtr) // Store the left major flag, level, and tile settings
     vrcph   tMnWI[0], $v31[2]     // 0
-    sb      $zero, materialCullMode // This covers tri write out
 tSTWHMI equ $v22 // H = elems 0-2, M = elems 4-6; init W = 7FFF
 tSTWHMF equ $v25
     vmudh   tSTWHMI, vOne, $v31[7]  // 0x7FFF
@@ -1842,14 +1839,6 @@ tri_decal_fix_z:
     j       tri_return_from_decal_fix_z
      set_vcc_11110001 // Clobbered by vcr
 
-tri_culled_by_occlusion_plane:
-.if CFG_PROFILING_B
-    addi    perfCounterB, perfCounterB, 0x4000
-.endif
-return_and_end_mat:
-    jr      $ra
-     sb     $zero, materialCullMode // This covers all tri early exits except clipping
-
 .if (. & 4)
     .warning "One instruction of padding before ovl234"
 .endif
@@ -1887,7 +1876,6 @@ ovl234_clipping_entrypoint:
 .if CFG_PROFILING_B
     addi    perfCounterB, perfCounterB, 1  // Increment clipped (input) tris count
 .endif
-    sb      $zero, materialCullMode        // In case only/all tri(s) clip then offscreen
     jal     vtx_setup_constants
      li     clipMaskIdx, 4
 clip_after_constants:
@@ -2233,7 +2221,6 @@ vtx_after_setup_constants:
     sb      $10, mITValid  // $10 is nonzero from mtx_multiply, in fact 0x18
 skip_vtx_mvp:
     bnez    $8, ovl234_lighting_entrypoint      // Lighting setup, incl. transform
-     sb     $zero, materialCullMode             // Vtx ends material
 vtx_after_lt_setup:
     lqv     vM0I,     (mITMatrix + 0x00)($zero)  // Load MVP matrix
     lqv     vM2I,     (mITMatrix + 0x10)($zero)
@@ -2257,7 +2244,6 @@ vtx_after_lt_setup:
     ldv     vM0F[8],  (mITMatrix + 0x20)($zero)
     ldv     vM2F[8],  (mITMatrix + 0x30)($zero)
 .else
-    sb      $zero, materialCullMode            // Vtx ends material
     lqv     vM0I,     (mMatrix + 0x00)($zero)  // Load M matrix
     lqv     vM2I,     (mMatrix + 0x10)($zero)
     lqv     vM0F,     (mMatrix + 0x20)($zero)
@@ -2363,8 +2349,6 @@ aLightImpl:
     vmrg      vPairRGBA, vPairRGBA, $v16    // in vPairRGBA replace RGB coordinates with v16
 
 @@no_alight:
-
-.notice aLightImpl 
 
 vtx_store_for_clip:
     vmudl   $v29, vPairTPosF, $v30[3]       // Persp norm
@@ -3203,7 +3187,6 @@ G_RDPHALF_2_handler:
 .if !ENABLE_PROFILING
     addi    perfCounterB, perfCounterB, 1   // Increment number of tex/fill rects
 .endif
-    sb      $zero, materialCullMode         // This covers tex and fill rects
     j       G_RDP_handler
      sdv    $v29[0], -8(rdpCmdBufPtr)
 
@@ -3239,6 +3222,7 @@ segmented_to_physical:
     lw      $11, (segmentTable)($11)      // Get the current address of the segment
     sll     cmd_w1_dram, cmd_w1_dram, 8   // Shift the address to the left so that the top 8 bits are shifted out
     srl     cmd_w1_dram, cmd_w1_dram, 8   // Shift the address back to the right, resulting in the original with the top 8 bits cleared
+return_and_end_mat:
     jr      $ra
      add    cmd_w1_dram, cmd_w1_dram, $11 // Add the segment's address to the masked input address, resulting in the virtual address
 
