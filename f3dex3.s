@@ -340,6 +340,7 @@ lightBufferAmbient:
     .skip 8 // just colors for ambient light
 ltBufOfs equ (lightBufferMain - altBase)
 
+ltmLoadCommand:
 occlusionPlaneEdgeCoeffs:
 /*
 NOTE: This explanation is outdated; see cpu/occlusionplane.c
@@ -474,10 +475,10 @@ alphaCompareCullMode:
 alphaCompareCullThresh:
     .db 0x00 // Alpha threshold, 00 - FF
 
-materialCullMode: // Overwritten to 0 by SPNormalsMode, but that should not
-    .db 0     // happen in the middle of tex setup
-normalsMode:
-    .db 0     // Overwrites materialCullMode
+ltmCache:
+    .db 0
+materialCullMode:
+    .db 0
 
 aLight:
     .db 0xff,0xa5,0x00,0, 0xff,0xa5,0x00,0
@@ -1196,6 +1197,25 @@ G_MOVEMEM_end:
     j       while_wait_dma_busy                         // wait for the DMA read to finish
      li     $ra, run_next_DL_command
 
+defer_ltm:
+    sw      cmd_w1_dram, ltmLoadCommand + 4
+    sb      $7, ltmCache // not zero
+    j       run_next_DL_command
+     sw     cmd_w0, ltmLoadCommand
+
+submit_ltm:
+    lw      $10, ltmLoadCommand
+    lw      $11, ltmLoadCommand + 4
+    sw      $10, 0(rdpCmdBufPtr)
+    sw      $11, 4(rdpCmdBufPtr)
+    addi    rdpCmdBufPtr, rdpCmdBufPtr, 8
+    sub     dmemAddr, rdpCmdBufPtr, rdpCmdBufEndP1
+    sw      $ra, ltmLoadCommand
+    bgezal  dmemAddr, flush_rdp_buffer
+     sb     $zero, ltmCache
+    j       after_submit_ltm
+     lw     $ra, ltmLoadCommand
+
 .if !CFG_LEGACY_VTX_PIPE
 G_DMA_IO_handler:
 G_BRANCH_WZ_handler:
@@ -1205,6 +1225,9 @@ G_MEMSET_handler:
 load_cmds_handler:
      lb     $3, materialCullMode
     bltz    $3, run_next_DL_command  // If cull mode is < 0, in mat second time, skip the load
+     sb     $zero, ltmCache
+    beqz    $3, defer_ltm
+     sb     $zero, materialCullMode
 G_RDP_handler:
      sw     cmd_w1_dram, 4(rdpCmdBufPtr)     // Add the second word of the command to the RDP command buffer
 G_SYNC_handler:
@@ -1287,10 +1310,8 @@ G_LIGHTTORDP_handler:
 .endif
 
 G_SETxIMG_handler:
-    lb      $3, materialCullMode            // Get current mode
     jal     segmented_to_physical           // Convert image to physical address
      lw     $2, lastMatDLPhyAddr            // Get last material physical addr
-    sb      $zero, materialCullMode
     beq     cmd_w1_dram, $2, @@skip         // Branch if we are executing the same mat again
      sw     cmd_w1_dram, lastMatDLPhyAddr   // Store material physical addr
     li      $7, 1                           // > 0: in material first time
@@ -1465,6 +1486,12 @@ tri_noinit: // ra is next cmd, second tri in TRI2, or middle of clipping
     bnez    $11, return_and_end_mat // Then the whole tri is offscreen, cull
      // 22 cycles
      vmrg   tHPos, $v6, $v4   // v14 = v1.y < v2.y ? v1 : v2 (lower vertex of v1, v2)
+
+    li      $11, ltmCache
+    bnez    $11, submit_ltm
+     nop
+after_submit_ltm:
+
     vmudh   $v29, $v10, $v12[1] // x = (v1 - v2).x * (v1 - v3).y ... 
     lhu     $24, activeClipPlanes
     vmadh   $v26, $v12, $v11[1] // ... + (v1 - v3).x * (v2 - v1).y = cross product = dir tri is facing
