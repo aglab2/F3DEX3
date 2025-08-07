@@ -567,7 +567,7 @@ miniTableEntry G_RDPHALF_2_handler
 miniTableEntry G_RDP_handler // G_SETTILESIZE
 miniTableEntry load_cmds_handler // G_LOADBLOCK
 miniTableEntry load_cmds_handler // G_LOADTILE
-miniTableEntry G_RDP_handler // G_SETTILE
+miniTableEntry G_SETTILE_handler // G_SETTILE
 miniTableEntry G_RDP_handler // G_FILLRECT
 miniTableEntry G_RDP_handler // G_SETFILLCOLOR
 miniTableEntry G_RDP_handler // G_SETFOGCOLOR
@@ -1203,18 +1203,29 @@ defer_ltm:
     j       run_next_DL_command
      sw     cmd_w0, ltmLoadCommand
 
+.notice ltmLoadCommand
+
+G_SETTILE_handler:
+    li      $11, ltmCache
+    beqz    $11, G_RDP_handler
+     sw     cmd_w1_dram, (rdpHalf1Val)
+    li      $6, write_tile
 submit_ltm:
-    lw      $10, ltmLoadCommand
-    lw      $11, ltmLoadCommand + 4
-    sw      $10, 0(rdpCmdBufPtr)
-    sw      $11, 4(rdpCmdBufPtr)
+    ldv     $v29, (ltmLoadCommand - altBase)(altBaseReg)
     addi    rdpCmdBufPtr, rdpCmdBufPtr, 8
+    sdv     $v29, -8(rdpCmdBufPtr)
     sub     dmemAddr, rdpCmdBufPtr, rdpCmdBufEndP1
     sw      $ra, ltmLoadCommand
     bgezal  dmemAddr, flush_rdp_buffer
-     sb     $zero, ltmCache
-    j       after_submit_ltm
+     sb      $zero, ltmCache
+    jr      $6
      lw     $ra, ltmLoadCommand
+
+write_tile:
+    j       G_RDP_handler
+     lw cmd_w1_dram, (rdpHalf1Val)
+
+.notice submit_ltm
 
 .if !CFG_LEGACY_VTX_PIPE
 G_DMA_IO_handler:
@@ -1488,8 +1499,8 @@ tri_noinit: // ra is next cmd, second tri in TRI2, or middle of clipping
      vmrg   tHPos, $v6, $v4   // v14 = v1.y < v2.y ? v1 : v2 (lower vertex of v1, v2)
 
     li      $11, ltmCache
+    li      $6, after_submit_ltm
     bnez    $11, submit_ltm
-     nop
 after_submit_ltm:
 
     vmudh   $v29, $v10, $v12[1] // x = (v1 - v2).x * (v1 - v3).y ... 
