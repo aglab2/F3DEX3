@@ -383,11 +383,10 @@ clipX[f] * -32.77f + clipY[f] * 65.54f + clipZ[f] * 163.84f + -32768
     .dh 0x8000 // c5
     .dh 0x8000 // c6
     .dh 0x8000 // c7
-occlusionPlaneMidCoeffs:
-    .dh 0x0000 // kx
-    .dh 0x0000 // ky
-    .dh 0x0000 // kz
-    .dh 0x8000 // kc
+lastMatorTLUT:
+    .dw 0
+lastMatAfterLUT:
+    .dw 0
 
 // Alternate base address because vector load offsets can't reach all of DMEM.
 // altBaseReg permanently points here.
@@ -475,17 +474,17 @@ alphaCompareCullMode:
 alphaCompareCullThresh:
     .db 0x00 // Alpha threshold, 00 - FF
 
-ltmCache:
+matCache: // values: 0 - no optimizations, <0 - seen before, >0, must be (lastMatAfterLUT-lastMatorTLUT) - known tlut loaded, skip next tex+load
     .db 0
-materialCullMode:
+ltmCache: // values: 0 - empty, !0 - needs flush
     .db 0
 
 aLight:
     .db 0xff,0xa5,0x00,0, 0xff,0xa5,0x00,0
 
-lastMatDLPhyAddr:
+RESERVE:
     .dw 0
-    
+
 activeClipPlanes:
     .dh CLIP_SCAL_NPXY | CLIP_CAMPLANE  // Normal tri write, set to zero when clipping
 
@@ -562,11 +561,11 @@ miniTableEntry G_RDP_handler // G_SETCONVERT
 miniTableEntry G_SETSCISSOR_handler
 miniTableEntry G_RDP_handler // G_SETPRIMDEPTH
 miniTableEntry G_RDPSETOTHERMODE_handler
-miniTableEntry load_cmds_handler // G_LOADTLUT
+miniTableEntry load_TLUT_handler // G_LOADTLUT
 miniTableEntry G_RDPHALF_2_handler
 miniTableEntry G_RDP_handler // G_SETTILESIZE
 miniTableEntry load_cmds_handler // G_LOADBLOCK
-miniTableEntry load_cmds_handler // G_LOADTILE
+miniTableEntry load_TILE_handler // G_LOADTILE
 miniTableEntry G_RDP_handler // G_SETTILE
 miniTableEntry G_RDP_handler // G_FILLRECT
 miniTableEntry G_RDP_handler // G_SETFILLCOLOR
@@ -1197,23 +1196,17 @@ G_MOVEMEM_end:
     j       while_wait_dma_busy                         // wait for the DMA read to finish
      li     $ra, run_next_DL_command
 
-defer_ltm:
-    sw      cmd_w1_dram, ltmLoadCommand + 4
-    sb      $7, ltmCache // not zero
-    j       run_next_DL_command
-     sw     cmd_w0, ltmLoadCommand
-
+vtx_submit_ltm:
+    li      $6, after_submit_ltm
 submit_ltm:
-    lw      $10, ltmLoadCommand
-    lw      $11, ltmLoadCommand + 4
-    sw      $10, 0(rdpCmdBufPtr)
-    sw      $11, 4(rdpCmdBufPtr)
+    ldv     $v29, (ltmLoadCommand - altBase)(altBaseReg)
     addi    rdpCmdBufPtr, rdpCmdBufPtr, 8
+    sdv     $v29, -8(rdpCmdBufPtr)
     sub     dmemAddr, rdpCmdBufPtr, rdpCmdBufEndP1
     sw      $ra, ltmLoadCommand
     bgezal  dmemAddr, flush_rdp_buffer
      sb     $zero, ltmCache
-    j       after_submit_ltm
+    jr      $6
      lw     $ra, ltmLoadCommand
 
 .if !CFG_LEGACY_VTX_PIPE
@@ -1223,11 +1216,29 @@ G_MEMSET_handler:
     j       ovl234_ovl4_entrypoint          // Delay slot is harmless
 .endif
 load_cmds_handler:
-     lb     $3, materialCullMode
-    bltz    $3, run_next_DL_command  // If cull mode is < 0, in mat second time, skip the load
-     sb     $zero, ltmCache
-    beqz    $3, defer_ltm
-     sb     $zero, materialCullMode
+    // check if dl is reusing previous material
+     lb     $3, matCache
+    lb      $2, ltmCache
+    bltz    $3, run_next_DL_command
+cache_ltm:
+     sw     cmd_w1_dram, ltmLoadCommand+4
+    sb      $7, ltmCache // not zero, negative
+    j       run_next_DL_command
+     sw     cmd_w0, ltmLoadCommand
+
+load_TILE_handler:
+    j       cache_ltm
+     sw     $zero, lastMatorTLUT // we are in large texture mode, forget cross img optimization
+
+mark_tlut_cached:
+    li     $1, lastMatAfterLUT-lastMatorTLUT
+    j      run_next_DL_command
+     sb    $1, matCache
+
+load_TLUT_handler:
+    lb     $3, matCache
+    bltz   $3, mark_tlut_cached //fall to RDP handler
+
 G_RDP_handler:
      sw     cmd_w1_dram, 4(rdpCmdBufPtr)     // Add the second word of the command to the RDP command buffer
 G_SYNC_handler:
@@ -1311,13 +1322,19 @@ G_LIGHTTORDP_handler:
 
 G_SETxIMG_handler:
     jal     segmented_to_physical           // Convert image to physical address
-     lw     $2, lastMatDLPhyAddr            // Get last material physical addr
+     lb      $1, matCache
+    bltz    $1, @@no_add                    // Prepare the pointer to address
+     li     $3, lastMatorTLUT
+    addu    $3, $3, $1                      // $3 will be either lastMatorTLUT or lastMatAfterLUT
+@@no_add:
+
+    lw      $2, ($3)                        // Get last material physical addr
     beq     cmd_w1_dram, $2, @@skip         // Branch if we are executing the same mat again
-     sw     cmd_w1_dram, lastMatDLPhyAddr   // Store material physical addr
-    li      $7, 1                           // > 0: in material first time
+     sw     cmd_w1_dram, ($3)               // Store material physical addr
+    li      $7, 0                           // =0: no optimizations
 @@skip:                                     // Otherwise $7 was < 0: cull mode (in mat second time)
     j       G_RDP_handler
-     sb     $7, materialCullMode
+     sb     $7, matCache
 
 .if CFG_LEGACY_VTX_PIPE
 
@@ -1488,8 +1505,7 @@ tri_noinit: // ra is next cmd, second tri in TRI2, or middle of clipping
      vmrg   tHPos, $v6, $v4   // v14 = v1.y < v2.y ? v1 : v2 (lower vertex of v1, v2)
 
     li      $11, ltmCache
-    bnez    $11, submit_ltm
-     nop
+    bnez    $11, vtx_submit_ltm
 after_submit_ltm:
 
     vmudh   $v29, $v10, $v12[1] // x = (v1 - v2).x * (v1 - v3).y ... 
