@@ -1491,10 +1491,6 @@ tri_noinit: // ra is next cmd, second tri in TRI2, or middle of clipping
      // 22 cycles
      vmrg   tHPos, $v6, $v4   // v14 = v1.y < v2.y ? v1 : v2 (lower vertex of v1, v2)
 
-    li      $11, ltmCache
-    bnez    $11, vtx_submit_ltm
-after_submit_ltm:
-
     vmudh   $v29, $v10, $v12[1] // x = (v1 - v2).x * (v1 - v3).y ... 
     lhu     $24, activeClipPlanes
     vmadh   $v26, $v12, $v11[1] // ... + (v1 - v3).x * (v2 - v1).y = cross product = dir tri is facing
@@ -1521,10 +1517,15 @@ after_submit_ltm:
      vmrg   tLPos, tLPos, $v4 // v10 = max(vert1.y, vert2.y, vert3.y) < max(vert1.y, vert2.y) : highest(vert1, vert2) ? highest(vert1, vert2, vert3)
 tSubPxHF equ $v4
 tSubPxHI equ $v26
+    li      $11, ltmCache
     vmudn   tSubPxHF, tHPos, $v31[5] // 0x4000
     beqz    $9, return_and_end_mat  // If cross product is 0, tri is degenerate (zero area), cull.
      // 36 cycles
      mfc2   $1, tHPos[12]     // tHPos = lowest Y value = highest on screen (x, y, addr)
+
+    bnez    $11, vtx_submit_ltm
+after_submit_ltm:
+
 tPosCatI equ $v15 // 0 X L-M; 1 Y L-M; 2 X M-H; 3 X L-H; 4-7 garbage
 tPosCatF equ $v25
     vsub    tPosMmH, tMPos, tHPos
@@ -2912,7 +2913,7 @@ mtx_multiply:
 .endif
 
 vtx_submit_ltm:
-    li      $6, after_submit_ltm
+    li      $2, after_submit_ltm
 submit_ltm:
     ldv     $v29, (ltmLoadCommand - altBase)(altBaseReg)
     addi    rdpCmdBufPtr, rdpCmdBufPtr, 8
@@ -2921,7 +2922,7 @@ submit_ltm:
     sw      $ra, ltmLoadCommand
     bgezal  dmemAddr, flush_rdp_buffer
      sb     $zero, ltmCache
-    jr      $6
+    jr      $2
      lw     $ra, ltmLoadCommand
 
 tri_snake_end:
@@ -3228,7 +3229,7 @@ G_RDPHALF_2_handler:
     ldv     $v25[0], (texrectWord1)($zero)
     beqz    $11, no_texrect_cache
      lw     cmd_w0, rdpHalf1Val
-    li      $6, after_texrect_ltm
+    li      $2, after_texrect_ltm
     j       submit_ltm
      move   $1, cmd_w1_dram
 after_texrect_ltm:
