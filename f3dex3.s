@@ -1196,19 +1196,6 @@ G_MOVEMEM_end:
     j       while_wait_dma_busy                         // wait for the DMA read to finish
      li     $ra, run_next_DL_command
 
-vtx_submit_ltm:
-    li      $6, after_submit_ltm
-submit_ltm:
-    ldv     $v29, (ltmLoadCommand - altBase)(altBaseReg)
-    addi    rdpCmdBufPtr, rdpCmdBufPtr, 8
-    sdv     $v29, -8(rdpCmdBufPtr)
-    sub     dmemAddr, rdpCmdBufPtr, rdpCmdBufEndP1
-    sw      $ra, ltmLoadCommand
-    bgezal  dmemAddr, flush_rdp_buffer
-     sb     $zero, ltmCache
-    jr      $6
-     lw     $ra, ltmLoadCommand
-
 .if !CFG_LEGACY_VTX_PIPE
 G_DMA_IO_handler:
 G_BRANCH_WZ_handler:
@@ -2924,6 +2911,19 @@ mtx_multiply:
     instantiate_mtx_multiply
 .endif
 
+vtx_submit_ltm:
+    li      $6, after_submit_ltm
+submit_ltm:
+    ldv     $v29, (ltmLoadCommand - altBase)(altBaseReg)
+    addi    rdpCmdBufPtr, rdpCmdBufPtr, 8
+    sdv     $v29, -8(rdpCmdBufPtr)
+    sub     dmemAddr, rdpCmdBufPtr, rdpCmdBufEndP1
+    sw      $ra, ltmLoadCommand
+    bgezal  dmemAddr, flush_rdp_buffer
+     sb     $zero, ltmCache
+    jr      $6
+     lw     $ra, ltmLoadCommand
+
 tri_snake_end:
     addi    inputBufferPos, inputBufferPos, 7 // Round up to whole input command
     addi    $11, $zero, 0xFFF8           // Sign-extend; andi is zero-extend!
@@ -3224,14 +3224,23 @@ G_RDPHALF_1_handler:
      sw     cmd_w1_dram, (texrectWord2 - G_TEXRECTFLIP_handler)($11)
 
 G_RDPHALF_2_handler:
-    ldv     $v29[0], (texrectWord1)($zero)
-    lw      cmd_w0, rdpHalf1Val             // load the RDPHALF1 value into w0
+    li      $11, ltmCache
+    ldv     $v25[0], (texrectWord1)($zero)
+    beqz    $11, no_texrect_cache
+     lw     cmd_w0, rdpHalf1Val
+    li      $6, after_texrect_ltm
+    j       submit_ltm
+     move   $1, cmd_w1_dram
+after_texrect_ltm:
+    move    cmd_w1_dram, $1
+no_texrect_cache:
+
     addi    rdpCmdBufPtr, rdpCmdBufPtr, 8
 .if !ENABLE_PROFILING
     addi    perfCounterB, perfCounterB, 1   // Increment number of tex/fill rects
 .endif
     j       G_RDP_handler
-     sdv    $v29[0], -8(rdpCmdBufPtr)
+     sdv    $v25[0], -8(rdpCmdBufPtr)
 
 /* This is a crazy optimization, and it was completely accidental!
 When G_RELSEGMENT was implemented, we did not notice the G_MOVEWORD behavior of
