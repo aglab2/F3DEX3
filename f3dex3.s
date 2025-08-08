@@ -3299,7 +3299,7 @@ culldl_loop:
      lhu    $11, (vtxSize + VTX_CLIP)($10)  // next vertex clip flags
     bne     $10, $3, culldl_loop            // loop until reaching the last vertex
      addi   $10, $10, vtxSize               // advance to the next vertex
-    li      cmd_w0, 0                       // Clear count of DL cmds to skip loading
+    li      cmd_w0, ((21 - ((4) % 21)) << 3) // Clear count of DL cmds to skip loading
 G_ENDDL_handler:
     lbu     $1, displayListStackLength      // Load the DL stack index; if end stack,
     beqz    $1, load_overlay_0_and_enter    // load overlay 0; $1 < 0 signals end
