@@ -2966,7 +2966,7 @@ load_overlays_0_1:
 
 load_overlays_2_3_4:
     addi    postOvlRA, $ra, -8  // Got here with jal, but want to return to addr of jal itself
-    li      dmaLen, ovl234_end - ovl234_start - 1
+    li      dmaLen, min(ovl2_padded_end - ovl2_start, ovl3_padded_end - ovl3_start) - 1
     li      dmemAddr, ovl234_start
 load_overlay_inner:
     lw      $11, OSTask + OSTask_ucode
