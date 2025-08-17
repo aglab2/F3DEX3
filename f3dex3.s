@@ -482,9 +482,6 @@ ltmCache: // values: 0 - empty, !0 - needs flush
 aLight:
     .db 0xff,0xa5,0x00,0, 0xff,0xa5,0x00,0
 
-RESERVE:
-    .dw 0
-
 activeClipPlanes:
     .dh CLIP_SCAL_NPXY | CLIP_CAMPLANE  // Normal tri write, set to zero when clipping
 
@@ -657,7 +654,7 @@ clipTempVerts:
 .org ((clipTempVerts + 0xF) & 0xFF0)
 // Vertex addresses, to avoid a multiply-add for each vertex index lookup
 vertexTable:
-    .skip ((G_MAX_VERTS + 8) * 2) // halfword for each vertex; need 1 extra end addr, easier to write 8 extra
+    .skip (64 * 2) // halfword for each vertex; need 1 extra end addr, easier to write 8 extra
     
 .if . > yieldDataFooter
     // Need to fit everything through vertex buffer in yield buffer, would like
@@ -2159,7 +2156,7 @@ fill_vertex_table:
     // to change the loop above to count by 2s than the stalls here.
     li      $2, vertexTable
     lpv     $v3[0], (0)($2)
-    li      $3, vertexTable + ((G_MAX_VERTS + 8) * 2) // Need 0-56 inclusive, so do 0-63
+    li      $3, vertexTable + 64 * 2 // Need 0-56 inclusive, so do 0-63
     vmudh   $v3, $v3, $v31[3] // 2; now 0x0000, 0x0200, ..., 0x0E00
 @@loop2:
     vmudn   $v29, vOne, v30_VB  // Address of vertex buffer

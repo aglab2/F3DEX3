@@ -110,10 +110,10 @@ G_NORMALSMODE_MANUAL equ 0x02
 
 ZMODE_DEC equ 0x0C00  // from othermode low; the value is the mask
 
-G_MAX_LIGHTS equ 9 // 9 directional / point lights, plus ambient light (and lookat)
+G_MAX_LIGHTS equ 2 // 9 directional / point lights, plus ambient light (and lookat)
 lightSize equ 0x10
 
-G_MAX_VERTS equ 56
+G_MAX_VERTS equ 59
 
 // Input Vertex structure offsets, should match Vtx structure in gbi.h
 inputVtxSize equ 0x10
