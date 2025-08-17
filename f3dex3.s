@@ -2917,9 +2917,9 @@ vtx_submit_ltm:
 submit_ltm:
     ldv     $v29, (ltmLoadCommand - altBase)(altBaseReg)
     addi    rdpCmdBufPtr, rdpCmdBufPtr, 8
-    sdv     $v29, -8(rdpCmdBufPtr)
     sub     dmemAddr, rdpCmdBufPtr, rdpCmdBufEndP1
     sw      $ra, ltmLoadCommand
+    sdv     $v29, -8(rdpCmdBufPtr)
     bgezal  dmemAddr, flush_rdp_buffer
      sb     $zero, ltmCache
     jr      $2
