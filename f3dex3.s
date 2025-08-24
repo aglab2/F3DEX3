@@ -1114,13 +1114,13 @@ initialize_rdp:
     lw      $3, OSTask + OSTask_output_buff // Load start of FIFO
     sub     $11, $3, $2                   // If start of FIFO > RDP end,
     bgtz    $11, @@start_new_buf          // start new buffer
-     mfc0   $1, DPC_CURRENT               // Load RDP current pointer
+     mfc0   $12, DPC_CURRENT              // Load RDP current pointer
     lw      $3, OSTask + OSTask_output_buff_size // Load end of FIFO
-    beqz    $1, @@start_new_buf           // If RDP current pointer is 0, start new buffer
-     sub    $11, $1, $3                   // If RDP current > end of fifo,
+    beqz    $12, @@start_new_buf          // If RDP current pointer is 0, start new buffer
+     sub    $11, $12, $3                  // If RDP current > end of fifo,
     bgez    $11, @@start_new_buf          // start new buffer
      nop
-    bne     $1, $2, @@continue_buffer     // If RDP current != RDP end, keep current buffer
+    bne     $12, $2, @@continue_buffer    // If RDP current != RDP end, keep current buffer
 @@start_new_buf:
     // There may be one buffer executing in the RDP, and another queued in the
     // double-buffered start/end regs. Wait for the latter to be available
@@ -1134,6 +1134,7 @@ initialize_rdp:
     // Set up the next buffer for the RDP to be zero size and at the end of the FIFO.
     mtc0    $2, DPC_START                 // Set RDP start addr to end of FIFO
     mtc0    $2, DPC_END                   // Set RDP end addr to end of FIFO
+    lw      $12, OSTask + OSTask_output_buff // Load start of FIFO
 @@continue_buffer:
     // If we jumped here, the RDP is currently executing from the middle of the FIFO.
     // So we can just append commands to there and move the end pointer.
@@ -1826,8 +1827,8 @@ flush_rdp_buffer: // Prereq: dmemAddr = rdpCmdBufPtr - rdpCmdBufEndP1, or dmemAd
 .endif
      lw     cmd_w1_dram, OSTask + OSTask_output_buff // Start of FIFO
 @@await_past_first_instr:
-    mfc0    $11, DPC_CURRENT                 // Load RDP current pointer
-    beq     $11, cmd_w1_dram, @@await_past_first_instr // Wait until RDP moved past start
+    mfc0    $12, DPC_CURRENT                 // Load RDP current pointer
+    beq     $12, cmd_w1_dram, @@await_past_first_instr // Wait until RDP moved past start
 .if COUNTER_C_FIFO_FULL
      addi   perfCounterC, perfCounterC, 6    // 3 instr + 2 after mfc + 1 taken branch
 .else
@@ -1844,13 +1845,13 @@ flush_rdp_buffer: // Prereq: dmemAddr = rdpCmdBufPtr - rdpCmdBufEndP1, or dmemAd
     addi    perfCounterC, perfCounterC, 10   // 7 instr + 2 after mfc + 1 taken branch
 .endif
 @@has_room:
-    mfc0    $11, DPC_CURRENT                 // Load RDP current pointer
-    sub     $11, $11, cmd_w1_dram            // Current - current end (rdpFifoPos or start)
+    sub     $11, $12, cmd_w1_dram            // Current - current end (rdpFifoPos or start)
     blez    $11, @@copy_buffer               // Current is behind or at current end, can do copy
      sub    $11, $11, dmaLen                 // If amount current is ahead of current end
     blez    $11, @@keep_waiting              // is <= size of buffer to copy, keep waiting
+     mfc0   $12, DPC_CURRENT                 // Load RDP current pointer
 @@copy_buffer:
-     add    $11, cmd_w1_dram, dmaLen         // New end is current end + buffer size
+    add     $11, cmd_w1_dram, dmaLen         // New end is current end + buffer size
     sw      $11, rdpFifoPos
     // Set up the DMA from DMEM to the RDP fifo in RDRAM
     addi    dmaLen, dmaLen, -1                                  // subtract 1 from the length
