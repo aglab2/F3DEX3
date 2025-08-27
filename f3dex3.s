@@ -255,6 +255,9 @@ texrectWord2:
 rdpHalf1Val:
     .fill 4
     
+// Is M inverse transpose valid or does it need to be recomputed. Zeroed when modifying M.
+mITValid:
+    .db 0
 dirLightsXfrmValid:
     .db 0
 numLightsxSize:
@@ -264,10 +267,6 @@ numLightsxSize:
 displayListStackLength:
     .db 0x00 // starts at 0, increments by 4 for each "return address" pushed onto the stack
     
-// Is M inverse transpose valid or does it need to be recomputed. Zeroed when modifying M.
-mITValid:
-    .db 0
-
 // viewport
 viewport:
     .fill 16
@@ -1156,7 +1155,7 @@ finish_setup:
     mfc0    $11, DPC_CLOCK
     sw      $11, startCounterTime
 .endif
-    sb      $zero, mITValid
+    sh      $zero, mITValid
     li      inputBufferPos, 0
     li      cmd_w1_dram, orga(ovl1_start)
     j       load_overlays_0_1
@@ -3141,7 +3140,7 @@ G_POPMTX_handler:
     sub     $1, cmd_w1_dram, $2             // Is it still valid / within the stack?
     sb      $zero, dirLightsXfrmValid       // Mark lights as needing recompute
     bgez    $1, @@skip                      // If so, skip the failsafe
-     sb     $zero, mITValid                 // Mark matrix as needing recompute
+     sh     $zero, mITValid                 // Mark matrix as needing recompute
     move    cmd_w1_dram, $2                 // Use the top of the stack as the new pointer
 @@skip:    
     j       do_movemem                      // Load the new matrix from the stack
@@ -3169,8 +3168,7 @@ G_MTX_handler:
     lw      cmd_w1_dram, (inputBufferEnd - 4)(inputBufferPos) // Load command word 1 again
 load_mtx:
     add     $7, $7, $2        // Add the load type to the command byte in $7, selects the return address based on whether the matrix needs multiplying or just loading
-    sb      $zero, dirLightsXfrmValid
-    sb      $zero, mITValid
+    sh      $zero, mITValid
 G_MOVEMEM_handler:
     jal     segmented_to_physical   // convert the memory address cmd_w1_dram to a virtual one
 do_movemem:
