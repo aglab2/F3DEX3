@@ -1401,20 +1401,20 @@ G_VTX_handler:
 //                  cmd_w0 + inputBufferEnd
 G_TRISNAKE_handler:
     sw      cmd_w0, rdpHalf1Val          // Store indices a, b, c
-    addi    inputBufferPos, inputBufferPos, -5 // Point to byte 3, index c of 1st tri
+    addi    inputBufferPos, inputBufferPos, -6 // Point to byte 2, index b of 1st tri
+    li      $ra, tri_snake_loop          // For tri_main
 tri_snake_loop:
-    lh      $3, (inputBufferEnd - 1)(inputBufferPos) // Load indices b and c
+    lh      $3, (inputBufferEnd)(inputBufferPos) // Load indices b and c
+    addi    inputBufferPos, inputBufferPos, 1  // Increment indices being read
 tri_snake_loop_from_input_buffer:
     lb      $2, rdpHalf1Val + 1          // Old v1; == index b, except when bridging between old and new load
-    li      $ra, tri_snake_loop          // For tri_main
     bltz    $3, tri_snake_end            // Upper bit of real index b set = done
      andi   $11, $3, 1                   // Get direction flag from index c
     beqz    inputBufferPos, tri_snake_over_input_buffer // == 0 at end of input buffer
      andi   $3, $3, 0x7E                 // Mask out flags from index c
     sb      $3, rdpHalf1Val + 1          // Store index c as vertex 1
-    sb      $2, (rdpHalf1Val + 2)($11)   // Store old v1 as 2 if dir clear or 3 if set
     j       tri_main
-     addi   inputBufferPos, inputBufferPos, 1  // Increment indices being read
+     sb     $2, (rdpHalf1Val + 2)($11)   // Store old v1 as 2 if dir clear or 3 if set
 
 // H = highest on screen = lowest Y value; then M = mid, L = low
 tHAtF equ $v5
@@ -2923,7 +2923,7 @@ submit_ltm:
 
 tri_snake_end:
     addi    inputBufferPos, inputBufferPos, 7 // Round up to whole input command
-    addi    $11, $zero, 0xFFF8           // Sign-extend; andi is zero-extend!
+    addi    $11, $zero, 0xFFF8               // Sign-extend; andi is zero-extend!
     j       tris_end
      and    inputBufferPos, inputBufferPos, $11 // inputBufferPos has to be negative
 
@@ -2931,6 +2931,7 @@ tri_snake_over_input_buffer:
     j       displaylist_dma_tri_snake    // inputBufferPos is now 0; load whole buffer
      li     $10, tri_snake_ret_from_input_buffer
 tri_snake_ret_from_input_buffer:
+    li      $ra, tri_snake_loop          // Clobbered by DMA. Putting this in the loop saves an instruction but loop takes 1 more cycle per tri.
     j       tri_snake_loop_from_input_buffer // inputBufferPos pointing to first byte loaded
      lbu    $3, (inputBufferEnd)(inputBufferPos) // Load c; clear real index b sign bit -> don't exit
 
