@@ -1346,11 +1346,11 @@ do_memset:
     srl     cmd_w0, cmd_w0, 8           // Number of bytes to memset (must be mult of 16)
 
     li      $3, memsetBufferStart + 0x10
-    li      $5, memsetBufferStart + 312*2*2
+    li      $1, memsetBufferStart + 312*2*2
 @@pre_loop:
-    sqv     $v2, (-0x10)($5)
-    bne     $5, $3, @@pre_loop
-     addi   $5, -0x10
+    sqv     $v2, (-0x10)($1)
+    bne     $1, $3, @@pre_loop
+     addi   $1, -0x10
 
 @@transaction_loop:
     li      dmemAddr, 0x8000 | memsetBufferStart  // Always write from start of buffer
