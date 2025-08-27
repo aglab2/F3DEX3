@@ -2,13 +2,15 @@
 
 .include "rsp/rsp_defs.inc"
 
-.definelabel VERSION_SH, 1
-
 // This file assumes DATA_FILE and CODE_FILE are set on the command line
 
 .if version() < 110
     .error "armips 0.11 or newer is required"
 .endif
+
+.macro move, dst, src
+    ori     dst, src, 0
+.endmacro
 
 .macro jumpTableEntry, addr
   .dh addr & 0xFFFF
@@ -203,14 +205,6 @@ audio_wet_gain      equ 0x1e // 0x37e
      nop
     jal   audio_04001150
      nop
-.ifndef VERSION_SH
-    addi  $2, $zero, 0x000f
-    addi  $1, $zero, segmentTable
-@@audio_040010c8:
-    sw    $zero, 0x00($1)
-    bgtz  $2, @@audio_040010c8
-     addi  $2, $2, -1
-.endif
 
 dma_busy:
     mfc0  $2, SP_DMA_BUSY
@@ -336,12 +330,7 @@ cmd_CLEARBUFF:
 cmd_LOADBUFF:
     lhu   $3, (audio_count)($24)
     beqz  $3, cmd_SPNOOP
-     sll   $2, $25, 8
-    srl   $2, $2, 8
-    srl   $4, $25, 24
-    sll   $4, $4, 2
-    lw    $5, (segmentTable)($4)
-    add   $2, $2, $5
+     move $2, $25
     lhu   $1, (audio_in_buf)($24)
     jal   dma_read_start
      addi  $3, $3, -1
@@ -355,12 +344,7 @@ cmd_LOADBUFF:
 cmd_SAVEBUFF:
     lhu   $3, (audio_count)($24)
     beqz  $3, cmd_SPNOOP
-     sll   $2, $25, 8
-    srl   $2, $2, 8
-    srl   $4, $25, 24
-    sll   $4, $4, 2
-    lw    $5, (segmentTable)($4)
-    add   $2, $2, $5
+     move $2, $25
     lhu   $1, (audio_out_buf)($24)
     jal   dma_write_start
      addi  $3, $3, -1
@@ -372,12 +356,7 @@ cmd_SAVEBUFF:
      mtc0  $zero, SP_SEMAPHORE
 
 cmd_LOADADPCM:
-    sll   $2, $25, 8
-    srl   $2, $2, 8
-    srl   $4, $25, 24
-    sll   $4, $4, 2
-    lw    $5, (segmentTable)($4)
-    add   $2, $2, $5
+    move  $2, $25
     addi  $1, $zero, adpcmTable
     andi  $3, $26, 0xffff
     jal   dma_read_start
@@ -390,15 +369,6 @@ cmd_LOADADPCM:
      mtc0  $zero, SP_SEMAPHORE
 .endif
 cmd_SEGMENT:
-.ifndef VERSION_SH
-    sll   $3, $25, 8           // Least significant 24-bits offset
-    srl   $3, $3, 8
-    srl   $2, $25, 24          // Most significant 8-bits segment number
-    sll   $2, $2, 2
-    add   $4, $zero, $2
-    j     cmd_SPNOOP
-     sw    $3, (segmentTable)($4)
-.endif
 
 .ifndef VERSION_SH
 cmd_SETBUFF:
@@ -545,18 +515,11 @@ cmd_DMEMMOVE:
 cmd_SETLOOP:
     sll   $1, $25, 8
     srl   $1, $1, 8
-.ifndef VERSION_SH
-    srl   $3, $25, 24
-    sll   $3, $3, 2
-    lw    $2, (segmentTable)($3)
-    add   $1, $1, $2
-    sw    $1, (audio_loop_value)($24)
-.endif
     j     cmd_SPNOOP
 .ifdef VERSION_SH
      sw    $at, 0x10($t8)
 .else
-     nop
+     sw    $25, (audio_loop_value)($24)
 .endif
 
 cmd_ADPCM:
@@ -571,31 +534,18 @@ cmd_ADPCM:
     vxor  $v14, $v14, $v14
     lhu   $18, (audio_count)($24)
     vxor  $v15, $v15, $v15
-.ifndef VERSION_SH
-    lui   $1, 0x00ff
-.endif
     vxor  $v16, $v16, $v16
 .ifdef VERSION_SH
     sll   $s1, $t9, 8
-.else
-    ori   $1, $1, 0xffff
 .endif
     vxor  $v17, $v17, $v17
-.ifndef VERSION_SH
-    and   $17, $25, $1
-.endif
     vxor  $v18, $v18, $v18
 .ifdef VERSION_SH
     srl   $s1, $s1, 8
 .else
-    srl   $2, $25, 24
+    move  $17, $25
 .endif
     vxor  $v19, $v19, $v19
-.ifndef VERSION_SH
-    sll   $2, $2, 2
-    lw    $3, (segmentTable)($2)
-    add   $17, $17, $3          // last frame addr
-.endif
     sqv   $v27[0], 0x00($19)
     sqv   $v27[0], 0x10($19)
     srl   $1, $26, 16
@@ -768,24 +718,17 @@ cmd_POLEF: // unused by SM64
     mtc2  $14, $v31[10]
     sll   $14, $14, 2
     mtc2  $14, $v16[0]
-    lui   $1, 0x00ff
     vxor  $v20, $v20, $v20
-    ori   $1, $1, 0xffff
     vxor  $v21, $v21, $v21
-    and   $18, $25, $1
     vxor  $v22, $v22, $v22
-    srl   $2, $25, 24
+    move  $2, $25
     vxor  $v23, $v23, $v23
-    sll   $2, $2, 2
-    lw    $3, (segmentTable)($2)
-    add   $18, $18, $3
     slv   $v28[0], 0x00($23)
     srl   $1, $26, 16
     andi  $1, $1, 0x0001
     bgtz  $1, @@audio_040017a0
      nop
     addi  $1, $23, 0x0000
-    addi  $2, $18, 0x0000
     jal   dma_read_start
      addi  $3, $zero, 7
 .endif
@@ -872,13 +815,7 @@ cmd_RESAMPLE:
     sll   $v0, $t9, 8
     srl   $v0, $v0, 8
 .else
-    lui   $4, 0x00ff
-    ori   $4, $4, 0xffff
-    and   $2, $25, $4
-    srl   $5, $25, 24
-    sll   $5, $5, 2
-    lw    $6, (segmentTable)($5)
-    add   $2, $2, $6          // physical address of state_addr
+    move  $2, $25
 .endif
     addi  $1, $23, 0x0000
     sw    $2, 0x40($23)       // overwrite TASK_UCODE ptr
@@ -1177,13 +1114,7 @@ cmd_DOWNSAMPLE_HALF:
 
 .ifndef VERSION_SH
 cmd_ENVMIXER:
-    lui   $4, 0x00ff
-    ori   $4, $4, 0xffff
-    and   $2, $25, $4
-    srl   $5, $25, 24
-    sll   $5, $5, 2
-    lw    $6, (segmentTable)($5)
-    add   $2, $2, $6
+    move  $2, $25
     addi  $1, $23, 0x00
     addi  $3, $zero, 0x4f
     vxor  $v0, $v0, $v0
