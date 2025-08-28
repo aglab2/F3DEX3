@@ -81,14 +81,14 @@ dispatchTable:
   jumpTableEntry cmd_LOADBUFF
   jumpTableEntry cmd_RESAMPLE
   jumpTableEntry cmd_SAVEBUFF
-  jumpTableEntry cmd_SEGMENT
+  jumpTableEntry cmd_RESAMPLE_ZOH
   jumpTableEntry cmd_SETBUFF
   jumpTableEntry cmd_SETVOL
   jumpTableEntry cmd_DMEMMOVE
   jumpTableEntry cmd_LOADADPCM
   jumpTableEntry cmd_MIXER
   jumpTableEntry cmd_INTERLEAVE
-  jumpTableEntry cmd_POLEF
+  jumpTableEntry cmd_DOWNSAMPLE_HALF
   jumpTableEntry cmd_SETLOOP
 .endif
 
@@ -1035,6 +1035,64 @@ cmd_RESAMPLE:
      nop
     j     cmd_SPNOOP
      mtc0  $zero, SP_SEMAPHORE
+
+cmd_RESAMPLE_ZOH:
+    lh    $14, (audio_in_buf)($24)
+    lh    $15, (audio_out_buf)($24)
+    lh    $13, (audio_count)($24)
+    andi  $12, $26, 0xffff
+    sll   $12, $12, 2
+    andi  $10, $25, 0xffff
+    sll   $14, $14, 16
+    or    $10, $10, $14
+@audio_4001f28:
+    srl   $11, $10, 16
+    andi  $11, $11, 0xfffe
+    lsv   $v1[0], 0x0($11)
+    add   $10, $10, $12
+    srl   $11, $10, 16
+    andi  $11, $11, 0xfffe
+    lsv   $v1[2], 0x0($11)
+    add   $10, $10, $12
+    srl   $11, $10, 16
+    andi  $11, $11, 0xfffe
+    lsv   $v1[4], 0x0($11)
+    add   $10, $10, $12
+    srl   $11, $10, 16
+    andi  $11, $11, 0xfffe
+    lsv   $v1[6], 0x0($11)
+    add   $10, $10, $12
+    addi  $13, $13, 0xfff8
+    sdv   $v1[0], 0x0($15)
+    addi  $15, $15, 0x8
+    bgtz  $13, @audio_4001f28
+     nop
+    jal   cmd_SPNOOP
+     nop
+
+cmd_DOWNSAMPLE_HALF:
+    andi  $t4, $26, 0xffff
+    andi  $t6, $25, 0xffff
+    srl   $t5, $25, 0x10
+@@audio_30C3BC:
+    lsv   $v1[0], 0x00($t5)
+    lsv   $v2[0], 0x08($t5)
+    lsv   $v3[0], 0x10($t5)
+    lsv   $v4[0], 0x18($t5)
+    lsv   $v1[2], 0x04($t5)
+    lsv   $v2[2], 0x0c($t5)
+    lsv   $v3[2], 0x14($t5)
+    lsv   $v4[2], 0x1c($t5)
+    addi  $t5, $t5, 0x20
+    slv   $v1[0], 0x00($t6)
+    slv   $v2[0], 0x04($t6)
+    slv   $v3[0], 0x08($t6)
+    addi  $t4, $t4, -8
+    slv   $v4[0], 0x0c($t6)
+    bgtz  $t4, @@audio_30C3BC
+     addi $t6, $t6, 0x10
+    j cmd_SPNOOP
+     nop
 
 .ifdef VERSION_SH
 cmd_DMEMMOVE2:
