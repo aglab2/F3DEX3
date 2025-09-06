@@ -1073,7 +1073,7 @@ cmd_RESAMPLE_ZOH:
 cmd_DOWNSAMPLE_HALF:
     andi  $t4, $26, 0xffff
     andi  $t6, $25, 0xffff
-    srl   $t5, $25, 0x10
+    srl   $t5, $25, 16
 @@audio_30C3BC:
     lsv   $v1[0], 0x00($t5)
     lsv   $v2[0], 0x08($t5)

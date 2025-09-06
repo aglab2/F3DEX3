@@ -1201,7 +1201,6 @@ G_MEMSET_handler:
 load_cmds_handler:
     // check if dl is reusing previous material
      lb     $3, matCache
-    lb      $2, ltmCache
     bltz    $3, run_next_DL_command
 cache_ltm:
      sw     cmd_w1_dram, ltmLoadCommand+4
@@ -1520,11 +1519,11 @@ tSubPxHI equ $v26
      mfc2   $1, tHPos[12]     // tHPos = lowest Y value = highest on screen (x, y, addr)
 
     bnez    $11, vtx_submit_ltm
-after_submit_ltm:
 
 tPosCatI equ $v15 // 0 X L-M; 1 Y L-M; 2 X M-H; 3 X L-H; 4-7 garbage
 tPosCatF equ $v25
     vsub    tPosMmH, tMPos, tHPos
+after_submit_ltm:
     mfc2    $2, tMPos[12]     // tMPos = mid vertex (x, y, addr)
     vsub    tPosLmH, tLPos, tHPos
 .if !ENABLE_PROFILING
