@@ -19,7 +19,8 @@ ALL_OPTIONS := \
   CFG_PROFILING_A \
   CFG_PROFILING_B \
   CFG_PROFILING_C \
-  CFG_CLIP_RATIO1
+  CFG_CLIP_RATIO1 \
+  CFG_LITE
 
 ARMIPS ?= armips
 PARENT_OUTPUT_DIR ?= ./build
@@ -213,6 +214,10 @@ define rule_builder_lvp
   
   NAME_NOC := $(NAME_LVP)_LVP_CR1
   OPTIONS_NOC := $(OPTIONS_LVP) CFG_LEGACY_VTX_PIPE CFG_CLIP_RATIO1
+  $$(eval $$(call rule_builder_noc))
+
+  NAME_NOC := $(NAME_LVP)_LVP_LITE
+  OPTIONS_NOC := $(OPTIONS_LVP) CFG_LEGACY_VTX_PIPE CFG_LITE
   $$(eval $$(call rule_builder_noc))
 endef
 

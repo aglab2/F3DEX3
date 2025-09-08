@@ -1512,7 +1512,7 @@ tri_noinit: // ra is next cmd, second tri in TRI2, or middle of clipping
      vmrg   tLPos, tLPos, $v4 // v10 = max(vert1.y, vert2.y, vert3.y) < max(vert1.y, vert2.y) : highest(vert1, vert2) ? highest(vert1, vert2, vert3)
 tSubPxHF equ $v4
 tSubPxHI equ $v26
-    li      $11, ltmCache
+    lb      $11, ltmCache
     vmudn   tSubPxHF, tHPos, $v31[5] // 0x4000
     beqz    $9, return_and_end_mat  // If cross product is 0, tri is degenerate (zero area), cull.
      // 36 cycles
@@ -2187,7 +2187,9 @@ vtx_setup_constants:
     // Computes modified viewport scale and offset including fog info, and stores
     // these to temp memory in the RDP buffer. This is only used during vertex write
     // and the first half of clipping, so that memory is not used then.
+.if !CFG_LITE
     llv     $v23[0], (fogFactor - altBase)(altBaseReg) // Load fog multiplier 0 and offset 1
+.endif
 .if CFG_LEGACY_VTX_PIPE && CFG_NO_OCCLUSION_PLANE
     veq     $v29, $v31, $v31[3h] // VCC = 00010001
 .elseif !CFG_NO_OCCLUSION_PLANE
@@ -2312,9 +2314,13 @@ vtx_after_calc_mit:
     ldv     vVP0F[8], (vpMatrix  + 0x20)($zero)
     ldv     vVP2F[8], (vpMatrix  + 0x30)($zero)
 .endif
+.if !CFG_LITE
     andi    $7, $5, G_FOG >> 8    // Nonzero if fog enabled
+.endif
 .if CFG_LEGACY_VTX_PIPE && CFG_NO_OCCLUSION_PLANE // New LVP_NOC
+.if !CFG_LITE
     srl     $7, $7, 5  // 8 if G_FOG is set, 0 otherwise
+.endif
     addi    $19, rdpCmdBufEndP1, vtxSize  // Temp mem; fog writes up to vtxSize before
     jal     while_wait_dma_busy   // Wait for vertex load to finish
      move   secondVtxPos, $19     // for first pre-loop, same for secondVtxPos
@@ -2356,13 +2362,16 @@ vtx_loop_no_lighting:
     sh      $10,              (VTX_CLIP      )($19) // Store first vertex flags
 // sKPI is $v11 // vtx_store Keep Int (keep across pipelining)
 // sKPG is vBBB = $v21 // vtx_store Keep Fog
+.if !CFG_LITE
     vge     sKPG, sKPI, $v31[6]  // Clamp W/fog to >= 0x7F00 (low byte is used)
+.endif
     luv     vPairRGBA[0],    (tempVpRGBA)(rdpCmdBufEndP1) // Vtx pair RGBA
 // sCLZ is $v19
     vge     sCLZ, sKPI, $v31[2]              // 0; clamp Z to >= 0
     addi    $1, $1, -2*inputVtxSize         // Decrement vertex count by 2
 vtx_return_from_lighting:
 
+.if !CFG_LITE
 aLightImpl:
     lb $11, aLightAlpha2
     // Mind that colors are bits 14..7. Bit 15 and all small bits are zerod out
@@ -2375,19 +2384,26 @@ aLightImpl:
     vmrg      vPairRGBA, vPairRGBA, $v16    // in vPairRGBA replace RGB coordinates with v16
 
 @@no_alight:
+.endif
 
 vtx_store_for_clip:
     vmudl   $v29, vPairTPosF, $v30[3]       // Persp norm
+.if !CFG_LITE
     sub     $20, secondVtxPos, $7           // Points 8 before secondVtxPos if fog, else 0
+.endif
 // s1WI is $v16 // vtx_store 1/W Int
     vmadm   s1WI, vPairTPosI, $v30[3]        // Persp norm
     addi    outputVtxPos, outputVtxPos, 2*vtxSize // Points to SECOND output vtx
 // s1WF is $v17 // vtx_store 1/W Frac
     vmadn   s1WF, $v31, $v31[2]             // 0
+.if !CFG_LITE
     sbv     sKPG[15], (VTX_COLOR_A + 8)($20) // In VTX_SCR_Y if fog disabled...
+.endif
 // sKPF is $v18 // vtx_store Keep Frac
     vmov    sKPF[1], sCLZ[2]
+.if !CFG_LITE
     sbv     sKPG[7],  (VTX_COLOR_A + 8 - vtxSize)($20) // ...which gets overwritten below
+.endif
 // sSCF is $v20 // vtx_store Scaled Clipping Frac
 .if CFG_CLIP_RATIO1
     vmudn   sSCF, vPairTPosF, $v28[3]        // W * clip ratio for scaled clipping
@@ -2492,15 +2508,21 @@ vtx_store_loop_entry:
      vmadn  $v29, vM1F, vPairPosI[1h]
     
 vtx_epilogue:
+.if !CFG_LITE
     vge     sKPG, sKPI, $v31[6]  // Clamp W/fog to >= 0x7F00 (low byte is used)
+.endif
     andi    $11, $11, CLIP_SCAL_NPXY // Mask to only bits we care about
     vge     sCLZ, sKPI, $v31[2]              // 0; clamp Z to >= 0
     or      $10, $10, $11          // Combine results for first vertex
+.if !CFG_LITE
     beqz    $7, @@skip_fog
      slv    sKPI[8],  (VTX_SCR_VEC    )(secondVtxPos)
     sbv     sKPG[15], (VTX_COLOR_A    )(secondVtxPos)
     sbv     sKPG[7],  (VTX_COLOR_A    )($19)
 @@skip_fog:
+.else
+    slv     sKPI[8],  (VTX_SCR_VEC    )(secondVtxPos)
+.endif
     vmov    sKPF[1], sCLZ[2]
     ssv     sCLZ[12], (VTX_SCR_Z      )(secondVtxPos)
     slv     sKPI[0],  (VTX_SCR_VEC    )($19)
@@ -3220,7 +3242,7 @@ G_RDPHALF_1_handler:
      sw     cmd_w1_dram, (texrectWord2 - G_TEXRECTFLIP_handler)($11)
 
 G_RDPHALF_2_handler:
-    li      $11, ltmCache
+    lb      $11, ltmCache
     ldv     $v25[0], (texrectWord1)($zero)
     beqz    $11, no_texrect_cache
      lw     cmd_w0, rdpHalf1Val
@@ -3532,7 +3554,9 @@ lt_loop:
      vmacf  vPairLt, vBBB, vCCC[0h] // + light color * dot product
 lt_post:
 .if CFG_NO_OCCLUSION_PLANE // New LVP_NOC
+.if !CFG_LITE
     vge     sKPG, sKPI, $v31[6]  // Clamp W/fog to >= 0x7F00 (low byte is used)
+.endif
     lpv     ltLookAt[0], (xfrmLookatDirs + 0)($zero) // Lookat 0 in 0-2, 1 in 4-6; = vNrmOut
     vge     sCLZ, sKPI, $v31[2]              // 0; clamp Z to >= 0
     sh      $10, (VTX_CLIP      )($19) // Store first vertex flags
