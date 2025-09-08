@@ -470,13 +470,12 @@ attrOffsetST:
     
 alphaCompareCullMode:
     .db 0x00 // 0 = disabled, 1 = cull if all < thresh, -1 = cull if all >= thresh
-alphaCompareCullThresh:
-    .db 0x00 // Alpha threshold, 00 - FF
-
 matCache: // values: 0 - no optimizations, <0 - seen before, >0, must be (lastMatAfterLUT-lastMatorTLUT) - known tlut loaded, skip next tex+load
     .db 0
 ltmCache: // values: 0 - empty, !0 - needs flush
     .db 0
+seenDraw: // values: 0 - has tri render, !0 - no tri renders
+    .db 0x00
 
 aLight:
     .db 0xff,0xa5,0x00,0, 0xff,0xa5,0x00,0
@@ -1205,6 +1204,7 @@ load_cmds_handler:
 cache_ltm:
      sw     cmd_w1_dram, ltmLoadCommand+4
     sb      $7, ltmCache // not zero, negative
+    sb      $7, seenDraw // not zero, negative
     j       run_next_DL_command
      sw     cmd_w0, ltmLoadCommand
 
@@ -1239,9 +1239,7 @@ vertex_end:
 .if !CFG_PROFILING_A
 tris_end:
 .endif
-.if ENABLE_PROFILING
 G_LIGHTTORDP_handler:
-.endif
 G_SPNOOP_handler:
 run_next_DL_command:
      mfc0   $1, SP_STATUS                               // load the status word into register $1
@@ -1289,20 +1287,17 @@ call_ret_common:
     j       displaylist_dma_with_count
      sb     $1, displayListStackLength
 
-.if !ENABLE_PROFILING
-G_LIGHTTORDP_handler:
-    lbu     $11, numLightsxSize          // Ambient light
-    lbu     $1, (inputBufferEnd - 0x6)(inputBufferPos) // Byte 2 = light count from end * size
-    andi    $2, cmd_w0, 0x00FF           // Byte 3 = alpha
-    sub     $1, $11, $1                  // Light address; byte 2 counts from end
-    lw      $3, (lightBufferMain-1)($1)  // Load light RGB into lower 3 bytes
-    move    cmd_w0, cmd_w1_dram          // Move second word to first (cmd byte, prim level)
-    sll     $3, $3, 8                    // Shift light RGB to upper 3 bytes and clear alpha byte
-    j       G_RDP_handler                // Send to RDP
-     or     cmd_w1_dram, $3, $2          // Combine RGB and alpha in second word
-.endif
-
 G_SETxIMG_handler:
+    lb      $1, ltmCache
+    lb      $2, seenDraw
+    and     $3, $2, $1
+    beqz    $3, @@no_flush
+     move   $1, cmd_w1_dram
+    j       submit_ltm
+     li     $2, @@continue_setximg_restore
+@@continue_setximg_restore:
+    move    cmd_w1_dram, $1
+@@no_flush:
     jal     segmented_to_physical           // Convert image to physical address
      lb      $1, matCache
     bltz    $1, @@no_add                    // Prepare the pointer to address
@@ -1330,35 +1325,6 @@ G_MEMSET_handler:
     li      $2, do_memset
     j flush_handler
      move   $3, cmd_w1_dram
-
-// We want to use memset to clear fb or zb with the correct word
-// Conveniently, we can use a stride of 4 lines for clearing
-do_memset:
-    lix     $4, (16 << 20) | ((2 - 1) << 12) | (312*2 - 1)
-    li      $2, 320*2*2
-
-    llv     $v2[0], (rdpHalf1Val)($zero) // Load the memset value
-    sll     cmd_w0, cmd_w0, 8           // Clear upper byte
-    addiu   cmd_w1_dram, $3, 8
-    vmudh   $v2, vOne, $v2[1]           // Move element 1 (lower bytes) to all
-    srl     cmd_w0, cmd_w0, 8           // Number of bytes to memset (must be mult of 16)
-
-    li      $3, memsetBufferStart + 0x10
-    li      $1, memsetBufferStart + 312*2*2
-@@pre_loop:
-    sqv     $v2, (-0x10)($1)
-    bne     $1, $3, @@pre_loop
-     addi   $1, -0x10
-
-@@transaction_loop:
-    li      dmemAddr, 0x8000 | memsetBufferStart  // Always write from start of buffer
-    jal     dma_read_write
-     move   dmaLen, $4
-    sub     cmd_w0, cmd_w0, $2
-    bgtz    cmd_w0, @@transaction_loop
-     add    cmd_w1_dram, cmd_w1_dram, $2
-    j       wait_for_dma_and_run_next_command
-     nop
 .endif
 
 G_FLUSH_handler:
@@ -2938,7 +2904,7 @@ submit_ltm:
     sw      $ra, ltmLoadCommand
     sdv     $v29, -8(rdpCmdBufPtr)
     bgezal  dmemAddr, flush_rdp_buffer
-     sb     $zero, ltmCache
+     sh     $zero, ltmCache
     jr      $2
      lw     $ra, ltmLoadCommand
 
@@ -2956,6 +2922,34 @@ tri_snake_ret_from_input_buffer:
     j       tri_snake_loop_from_input_buffer // inputBufferPos pointing to first byte loaded
      lbu    $3, (inputBufferEnd)(inputBufferPos) // Load c; clear real index b sign bit -> don't exit
 
+// We want to use memset to clear fb or zb with the correct word
+// Conveniently, we can use a stride of 4 lines for clearing
+do_memset:
+    lix     $4, (16 << 20) | ((2 - 1) << 12) | (312*2 - 1)
+    li      $2, 320*2*2
+
+    llv     $v2[0], (rdpHalf1Val)($zero) // Load the memset value
+    sll     cmd_w0, cmd_w0, 8           // Clear upper byte
+    addiu   cmd_w1_dram, $3, 8
+    vmudh   $v2, vOne, $v2[1]           // Move element 1 (lower bytes) to all
+    srl     cmd_w0, cmd_w0, 8           // Number of bytes to memset (must be mult of 16)
+
+    li      $3, memsetBufferStart + 0x10
+    li      $1, memsetBufferStart + 312*2*2
+@@pre_loop:
+    sqv     $v2, (-0x10)($1)
+    bne     $1, $3, @@pre_loop
+     addi   $1, -0x10
+
+@@transaction_loop:
+    li      dmemAddr, 0x8000 | memsetBufferStart  // Always write from start of buffer
+    jal     dma_read_write
+     move   dmaLen, $4
+    sub     cmd_w0, cmd_w0, $2
+    bgtz    cmd_w0, @@transaction_loop
+     add    cmd_w1_dram, cmd_w1_dram, $2
+    j       wait_for_dma_and_run_next_command
+     nop
 
 .if CFG_PROFILING_B
 loadOverlayInstrs equ 13
@@ -3243,6 +3237,7 @@ G_RDPHALF_1_handler:
 
 G_RDPHALF_2_handler:
     lb      $11, ltmCache
+    sb      $zero, seenDraw
     ldv     $v25[0], (texrectWord1)($zero)
     beqz    $11, no_texrect_cache
      lw     cmd_w0, rdpHalf1Val
@@ -3292,9 +3287,12 @@ segmented_to_physical:
     lw      $11, (segmentTable)($11)      // Get the current address of the segment
     sll     cmd_w1_dram, cmd_w1_dram, 8   // Shift the address to the left so that the top 8 bits are shifted out
     srl     cmd_w1_dram, cmd_w1_dram, 8   // Shift the address back to the right, resulting in the original with the top 8 bits cleared
-return_and_end_mat:
     jr      $ra
      add    cmd_w1_dram, cmd_w1_dram, $11 // Add the segment's address to the masked input address, resulting in the virtual address
+
+return_and_end_mat:
+    jr      $ra
+     sb     $zero, seenDraw
 
 G_CULLDL_handler:
     lhu     $10, (vertexTable)(cmd_w0)      // Start vtx addr
