@@ -456,13 +456,13 @@ fresnelOffset:
 attrOffsetST:
     .dh 0x0100
     .dh 0xFF00
-    
+
 alphaCompareCullMode:
     .db 0x00 // 0 = disabled, 1 = cull if all < thresh, -1 = cull if all >= thresh
 alphaCompareCullThresh:
     .db 0x00 // Alpha threshold, 00 - FF
     
-lastMatDLPhyAddr:
+lastMatorTLUT:
     .dw 0
 
 .if (. - fxParams) != 0x1A
@@ -471,9 +471,17 @@ lastMatDLPhyAddr:
 
 packedNormalsMaskConstant:
     .db 0xF8 // When read, materialCullMode has been zeroed, so read as 0xF800
-materialCullMode:
+unused3:
     .db 0
-    
+
+lastMatAfterLUT:
+    .dw 0
+aLight:
+    .db 0xff,0xa5,0x00,0, 0xff,0xa5,0x00,0
+ltmLoadCommand:
+    .dw 0x00000000
+    .dw 0x00000000
+
 geometryModeLabel:
     .dw 0x00000000
 
@@ -527,6 +535,19 @@ pointLightFlag:
 numLightsxSize:
     .db 0   // lightSize * number of lights
 
+matCache: // values: 0 - no optimizations, <0 - seen before, >0, must be (lastMatAfterLUT-lastMatorTLUT) - known tlut loaded, skip next tex+load
+    .db 0
+ltmCache: // values: 0 - empty, !0 - needs flush
+    .db 0
+seenDraw: // values: 0 - has tri render, !0 - no tri renders
+    .db 0x00
+unused4:
+    .db 0x00
+unused5:
+    .db 0x00
+unused6:
+    .db 0x00
+
 .macro miniTableEntry, addr
     .if addr < 0x1000 || addr >= 0x1400
         .error "Handler address out of range!"
@@ -564,11 +585,11 @@ miniTableEntry G_RDP_handler // G_SETCONVERT
 miniTableEntry G_SETSCISSOR_handler
 miniTableEntry G_RDP_handler // G_SETPRIMDEPTH
 miniTableEntry G_RDPSETOTHERMODE_handler
-miniTableEntry load_cmds_handler // G_LOADTLUT
+miniTableEntry G_LOADTLUT_handler // G_LOADTLUT
 miniTableEntry G_RDPHALF_2_handler
 miniTableEntry G_RDP_handler // G_SETTILESIZE
-miniTableEntry load_cmds_handler // G_LOADBLOCK
-miniTableEntry load_cmds_handler // G_LOADTILE
+miniTableEntry G_LOADBLOCK_handler // G_LOADBLOCK
+miniTableEntry G_LOADTILE_handler // G_LOADTILE
 miniTableEntry G_RDP_handler // G_SETTILE
 miniTableEntry G_RDP_handler // G_FILLRECT
 miniTableEntry G_RDP_handler // G_SETFILLCOLOR
@@ -643,6 +664,9 @@ END_VARIABLE_LEN_DMEM equ (0x1000 - OSTASK_ORIG_SIZE - INPUT_BUFFER_SIZE_BYTES -
 startFreeDmem:
 .org END_VARIABLE_LEN_DMEM
 endFreeDmem:
+
+.notice startFreeDmem
+.notice endFreeDmem
 
 // Main vertex buffer in RSP internal format
 vertexBuffer:
@@ -1139,7 +1163,6 @@ G_DL_handler:
     sw      $3, (displayListStack)($7)
     addi    $7, $7, 4                       // Increment the DL stack length
 call_ret_common:
-    sb      $zero, materialCullMode         // This covers call, branch, return, and cull and branchZ successes
     sb      $7, displayListStackLength
     andi    inputBufferPos, cmd_w0, 0x00F8  // Byte 3, how many cmds to drop from load (max 0xA0)
 displaylist_dma:
@@ -1182,10 +1205,19 @@ G_RDPHALF_1_handler: // $ra = ., 0x10 ahead of geometry mode
      sw     cmd_w1_dram, (geometryModeLabel - G_GEOMETRYMODE_handler)($ra)
 
 G_RDPHALF_2_handler: // 8; should be after the handlers with alignment needs
+    lb      $11, ltmCache
+    sb      $zero, seenDraw
+    beqz    $11, no_texrect_cache
+     lw     cmd_w0, rdpHalf1Val
+    li      $2, after_texrect_ltm
+    j       submit_ltm
+     move   $1, cmd_w1_dram
+after_texrect_ltm:
+    move    cmd_w1_dram, $1
+no_texrect_cache:
+
     li      $11, texrectState
     ldv     $v29[0], (0)($11)
-    sb      $zero, materialCullMode         // This covers tex and fill rects
-    lw      cmd_w0, rdpHalf1Val             // load the RDPHALF1 value into w0
     addi    rdpCmdBufPtr, rdpCmdBufPtr, 8
 .if !ENABLE_PROFILING
     addi    perfCounterB, perfCounterB, 1   // Increment number of tex/fill rects
@@ -1193,28 +1225,62 @@ G_RDPHALF_2_handler: // 8; should be after the handlers with alignment needs
     j       send_w0_w1_to_rdp               // w1 is from the current command
      sdv    $v29[0], -8(rdpCmdBufPtr)
 
-G_SETxIMG_handler: // 12
-    lb      $3, materialCullMode            // Get current mode
+G_SETxIMG_handler:
+    lb      $1, ltmCache
+    lb      $2, seenDraw
+    and     $3, $2, $1
+    beqz    $3, @@no_flush
+     move   $1, cmd_w1_dram
+    j       submit_ltm
+     li     $2, @@continue_setximg_restore
+@@continue_setximg_restore:
+    move    cmd_w1_dram, $1
+@@no_flush:
     jal     segmented_to_physical           // Convert image to physical address
-     lw     $2, lastMatDLPhyAddr            // Get last material physical addr
-    bnez    $3, send_w0_w1_to_rdp           // If not in normal mode (0), exit
-     add    $10, taskDataPtr, inputBufferPos // Current material physical addr
-    beq     $10, $2, @@skip                 // Branch if we are executing the same mat again
-     sw     $10, lastMatDLPhyAddr           // Store material physical addr
-    li      $7, 1                           // > 0: in material first time
-@@skip:                                     // Otherwise $7 was < 0 (SETxIMG command byte): cull mode (in mat second time)
-    sb      $7, materialCullMode
+     lb      $1, matCache
+    bltz    $1, @@no_add                    // Prepare the pointer to address
+     li     $3, lastMatorTLUT
+    addu    $3, $3, $1                      // $3 will be either lastMatorTLUT or lastMatAfterLUT
+@@no_add:
+
+    lw      $2, ($3)                        // Get last material physical addr
+    beq     cmd_w1_dram, $2, @@skip         // Branch if we are executing the same mat again
+     sw     cmd_w1_dram, ($3)               // Store material physical addr
+    li      $7, 0                           // =0: no optimizations
+@@skip:                                     // Otherwise $7 was < 0: cull mode (in mat second time)
+    sb      $7, matCache
+
 send_w0_w1_to_rdp:
     sw      cmd_w0, 0(rdpCmdBufPtr)
 send_w1_to_rdp:
     j       commit_small_rdp_command
      sw     cmd_w1_dram, 4(rdpCmdBufPtr)
 
+G_LOADBLOCK_handler:
+    // check if dl is reusing previous material
+     lb     $3, matCache
+    bltz    $3, run_next_DL_command
+cache_ltm:
+    sb      $7, ltmCache // not zero, negative
+    sb      $7, seenDraw // not zero, negative
+    j       run_next_DL_command
+     spv    $v4[0], (ltmLoadCommand - altBase)(altBaseReg)
+
+G_LOADTILE_handler:
+    j       cache_ltm
+     sw     $zero, lastMatorTLUT // we are in large texture mode, forget cross img optimization
+
+mark_tlut_cached:
+    li     $1, lastMatAfterLUT-lastMatorTLUT
+    j      run_next_DL_command
+     sb    $1, matCache
+
 G_MEMSET_handler:
     j       ovl234_clipmisc_entrypoint       // Delay slot is harmless
-load_cmds_handler:
-     lb     $3, materialCullMode
-    bltz    $3, run_next_DL_command  // If cull mode is < 0, in mat second time, skip the load
+    
+G_LOADTLUT_handler:
+    lb     $3, matCache
+    bltz   $3, mark_tlut_cached //fall to RDP handler
 G_RDP_handler:
      spv    $v4[0], 0(rdpCmdBufPtr)     // Whole command
 commit_small_rdp_command:
@@ -1230,8 +1296,8 @@ check_rdp_buffer_full_and_run_next_cmd:
 tris_end:
 .endif
 .if ENABLE_PROFILING
-G_LIGHTTORDP_handler:
 .endif
+G_LIGHTTORDP_handler:
 G_SPNOOP_handler:
 run_next_DL_command:
      lb     $7, (inputBufferEnd)(inputBufferPos)        // Command byte
@@ -1288,19 +1354,6 @@ do_movemem: // Coming from popmtx; $7 was set to (-0x100 | G_MOVEMEM)
 dma_and_wait_goto_next_ra:
     j       dma_read_write
      li     $ra, wait_goto_next_ra
-
-.if !ENABLE_PROFILING
-G_LIGHTTORDP_handler: // 9
-    sw      cmd_w1_dram, 0(rdpCmdBufPtr) // Store second word as first (cmd byte, prim level)
-    lbu     $11, numLightsxSize          // Ambient light
-    lbu     $1, (inputBufferEnd - 0x6)(inputBufferPos) // Byte 2 = light count from end * size
-    andi    $2, cmd_w0, 0x00FF           // Byte 3 = alpha
-    sub     $1, $11, $1                  // Light address; byte 2 counts from end
-    lw      $3, (lightBufferMain-1)($1)  // Load light RGB into lower 3 bytes
-    sll     $3, $3, 8                    // Shift light RGB to upper 3 bytes and clear alpha byte
-    j       send_w1_to_rdp               // Write word w1 to RDP
-     or     cmd_w1_dram, $3, $2          // Combine RGB and alpha in second word
-.endif
 
 align_with_warning 8, "One instruction of padding before tri snake"
 
@@ -1437,6 +1490,7 @@ tri_from_clip:
      // 27 cycles
      vmrg   tLPos, tLPos, $v4 // v10 = max(vert1.y, vert2.y, vert3.y) < max(vert1.y, vert2.y) : highest(vert1, vert2) ? highest(vert1, vert2, vert3)
 tSubPxHF equ $v4
+    lb      $11, ltmCache
     vmudn   tSubPxHF, tHPos, $v31[5] // 0x4000
     beqz    $9, return_and_end_mat  // If cross product is 0, tri is degenerate (zero area), cull.
      // 29 cycles
@@ -1446,8 +1500,10 @@ tSubPxHF equ $v4
      vsub   tPosMmH, tMPos, tHPos
 .if !CFG_NO_OCCLUSION_PLANE
     and     $6, $6, $8
-.endif
-    vsub    tPosLmH, tLPos, tHPos
+.endif 
+    bnez    $11, vtx_submit_ltm
+     vsub   tPosLmH, tLPos, tHPos
+after_submit_ltm:
 .if !CFG_NO_OCCLUSION_PLANE
     andi    $6, $6, CLIP_OCCLUDED
 .endif
@@ -1510,10 +1566,8 @@ tri_return_from_flat_shading:
     vmudl   $v29, $v20, vTRC_0020
     lw      $8, VTX_INV_W_VEC($3)
     vmadm   $v22, $v22, vTRC_0020
-    bnez    $11, tri_alpha_compare_cull
-     vmadn  $v20, $v31, $v31[2] // 0
+    vmadn   $v20, $v31, $v31[2] // 0
 // $v6 <- tPosMmH; $v6 clobbered in alpha compare cull
-tri_return_from_alpha_compare_cull: // Uses $v25, $v26
     // 53 cycles
 tPosCatF equ $v25
     vmudm   tPosCatF, tPosCatI, vTRC_1000
@@ -1576,7 +1630,7 @@ tMnWI equ $v25 // <- tMx1W
     lw      $19, otherMode1
 tSTWHMI equ $v22 // H = elems 0-2, M = elems 4-6; init W = 7FFF
     vmudh   tSTWHMI, vOne, $v31[7]  // 0x7FFF
-    sb      $zero, materialCullMode // Covers tri write (non early exit)
+    sb      $zero, seenDraw // Covers tri write (non early exit)
     vmudm   $v29, t1WI, tMnWF[0] // 1/W each vtx * min W = 1 for one of the verts, < 1 for others
     llv     tSTWHMI[0], VTX_TC_VEC($1)
     vmadl   $v29, t1WF, tMnWF[0]
@@ -1633,7 +1687,7 @@ tAtMmHI equ $v27
     vsubc   tAtLmHF, tLAtF, tHAtF
     sll     $1, $1, 14
     vsub    tAtLmHI, tLAtI, tHAtI
-    sb      $zero, materialCullMode // This covers tri write out
+    sb      $zero, seenDraw // This covers tri write out
     vsubc   tAtMmHF, tMAtF, tHAtF
     sw      $1, 0x0008(rdpCmdBufPtr)         // Store XL edge coefficient
     vsub    tAtMmHI, tMAtI, tHAtI
@@ -1904,7 +1958,6 @@ clip_after_constants:
     sh      origV1Addr, clipPoly + 0xA  // Initial polygon is right-justified
     sh      $2, clipPoly + 0xC
     sh      $3, clipPoly + 0xE
-    sb      $zero, materialCullMode  // In case only/all tri(s) clip then offscreen
     li      clipMaskIdx, 5           // Will sub 1; 4=screen, 3=+x, 2=-x, 1=+y, 0=-y
     li      clipAlloc, 0             // Init to no temp verts allocated
 clip_condlooptop:
@@ -2161,19 +2214,6 @@ ovl3_padded_end:
 .orga max(max(ovl2_padded_end - ovl2_start, ovl4_padded_end - ovl4_start) + orga(ovl3_start), orga())
 ovl234_end:
 
-tri_alpha_compare_cull:
-// Alpha compare culling
-    vge     $v26, tHAtI, tMAtI
-    lbu     $19, alphaCompareCullThresh
-    vlt     $v25, tHAtI, tMAtI
-    bgtz    $11, @@skip1
-     vge    $v26, $v26, tLAtI // If alphaCompareCullMode > 0, $v26 = max of 3 verts
-    vlt     $v26, $v25, tLAtI // else if < 0, $v26 = min of 3 verts
-@@skip1: // $v26 elem 3 has max or min alpha value
-    mfc2    $24, $v26[6]
-    sub     $24, $24, $19 // sign bit set if (max/min) < thresh
-    xor     $24, $24, $11 // invert sign bit if other cond. Sign bit set -> cull,
-    bgez    $24, tri_return_from_alpha_compare_cull // if max < thresh or if min >= thresh.
 tri_culled_by_occlusion_plane:
 .if CFG_PROFILING_B
      nop
@@ -2182,7 +2222,7 @@ tri_culled_by_occlusion_plane:
 return_and_end_mat:
      tri_v1_move // overwrites $v6[1]
     jr      $ra
-     sb     $zero, materialCullMode // This covers all tri early exits except clipping
+     sb     $zero, seenDraw
 
 vtx_after_dma:
     mfc2    outVtxBase, $v8[6]                 // Address of output start
@@ -2206,14 +2246,10 @@ vtx_constants_for_clip:
     ldv     sVPS[8], (viewport)($zero)
     lb      $11, geometryModeLabel + 3            // G_ATTROFFSET_ST_ENABLE in sign bit
     vmrg    sVPO, sVPO, sFOG[1]                   // Put fog offset in elements 3,7 of vtrans
-    llv     $v30[0], (attrOffsetST - altBase)(altBaseReg)  // Texture ST offset in 0, 1
     vmov    sSTS[4], sSTS[0]
-    llv     $v30[8], (attrOffsetST - altBase)(altBaseReg)  // Texture ST offset in 4, 5
     vmrg    sVPS, sVPS, sFOG[0]                   // Put fog multiplier in elements 3,7 of vscale
-    bltz    $11, @@keepoffset
      lbu    $7, mvpValid
     vclr    $v30
-@@keepoffset:
 .else
     lb      flagsV1, geometryModeLabel + 3    // G_ATTROFFSET_ST_ENABLE in sign bit
     lw      $11, (fogFactor)($zero)           // Load fog multiplier MSBs and offset LSBs
@@ -2249,7 +2285,6 @@ vtx_after_setup_constants:
 @@skip_recalc_mvp:
     andi    $11, vGeomMid, G_LIGHTING >> 8
     bnez    $11, vtx_select_lighting
-     sb     $zero, materialCullMode  // Vtx ends material. Must be before lighting for clever packedNormalsMaskConstant reuse
 vtx_setup_no_lighting:
     li      vLoopRet, vtx_loop_no_lighting
 vtx_after_lt_setup:
@@ -2653,6 +2688,19 @@ tris_end:
      lqv    vTRC, (vTRCValue)($zero)         // Restore value overwritten by matrix
 .endif
 
+vtx_submit_ltm:
+    li      $2, after_submit_ltm
+submit_ltm:
+    ldv     $v29, (ltmLoadCommand - altBase)(altBaseReg)
+    addi    rdpCmdBufPtr, rdpCmdBufPtr, 8
+    sub     dmemAddr, rdpCmdBufPtr, rdpCmdBufEndP1
+    sw      $ra, ltmLoadCommand
+    sdv     $v29, -8(rdpCmdBufPtr)
+    bgezal  dmemAddr, flush_rdp_buffer
+     sh     $zero, ltmCache
+    jr      $2
+     lw     $ra, ltmLoadCommand
+
 tri_snake_over_input_buffer: // inputBufferPos is now 0; load whole buffer
     bgez    $3, displaylist_dma_goto_next_ra // If $3 < 0, last tri flag set, proceed to end
      li     nextRA, -0x8000 | tri_snake_ret_from_input_buffer // Negative is flag for from snake
@@ -2720,6 +2768,7 @@ dma_read_write:
 
 endFreeImemAddr equ 0x1FC4
 startFreeImem:
+.notice .
 .if . > endFreeImemAddr
     .error "Out of IMEM space"
 .endif
