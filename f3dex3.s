@@ -376,15 +376,15 @@ then multiply everything by (32768.0f / max(abs(kx), abs(ky), abs(kz), abs(kc)))
 (here 32768.0f / 200.0f = 163.84f)
 clipX[f] * -32.77f + clipY[f] * 65.54f + clipZ[f] * 163.84f + -32768
 */
+ltmLoadCommand:
     .dh 0x0000 // c0
     .dh 0x0000 // c1
     .dh 0x0000 // c2
     .dh 0x0000 // c3
-    .dh 0x8000 // c4
-    .dh 0x8000 // c5
-    .dh 0x8000 // c6
-    .dh 0x8000 // c7
+aLight:
+    .db 0xff,0xa5,0x00,0, 0xff,0xa5,0x00,0
 occlusionPlaneMidCoeffs:
+lastMatorTLUT:
     .dh 0x0000 // kx
     .dh 0x0000 // ky
     .dh 0x0000 // kz
@@ -449,8 +449,10 @@ texgenLinearCoeffs:
     .dh 0x6CB3
     
 fresnelScale:
+aLightAlpha1:
     .dh 0x0000
 fresnelOffset:
+aLightAlpha2:
     .dh 0x0000
 
 attrOffsetST:
@@ -462,7 +464,7 @@ alphaCompareCullMode:
 alphaCompareCullThresh:
     .db 0x00 // Alpha threshold, 00 - FF
     
-lastMatorTLUT:
+lastMatAfterLUT:
     .dw 0
 
 .if (. - fxParams) != 0x1A
@@ -473,14 +475,6 @@ packedNormalsMaskConstant:
     .db 0xF8 // When read, materialCullMode has been zeroed, so read as 0xF800
 unused3:
     .db 0
-
-lastMatAfterLUT:
-    .dw 0
-aLight:
-    .db 0xff,0xa5,0x00,0, 0xff,0xa5,0x00,0
-ltmLoadCommand:
-    .dw 0x00000000
-    .dw 0x00000000
 
 geometryModeLabel:
     .dw 0x00000000
@@ -540,12 +534,6 @@ matCache: // values: 0 - no optimizations, <0 - seen before, >0, must be (lastMa
 ltmCache: // values: 0 - empty, !0 - needs flush
     .db 0
 seenDraw: // values: 0 - has tri render, !0 - no tri renders
-    .db 0x00
-unused4:
-    .db 0x00
-unused5:
-    .db 0x00
-unused6:
     .db 0x00
 
 .macro miniTableEntry, addr
