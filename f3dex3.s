@@ -599,7 +599,7 @@ miniTableEntry G_TRI1_handler
 miniTableEntry G_TRI2_handler
 miniTableEntry G_QUAD_handler
 miniTableEntry G_TRISNAKE_handler
-miniTableEntry G_SPNOOP_handler // no command mapped to 0x09
+miniTableEntry G_ALIGHT_handler
 miniTableEntry G_LIGHTTORDP_handler
 miniTableEntry G_RELSEGMENT_handler
 
@@ -1263,9 +1263,6 @@ mark_tlut_cached:
     j      run_next_DL_command
      sb    $1, matCache
 
-G_MEMSET_handler:
-    j       ovl234_clipmisc_entrypoint       // Delay slot is harmless
-    
 G_LOADTLUT_handler:
     lb     $3, matCache
     bltz   $3, mark_tlut_cached //fall to RDP handler
@@ -1287,6 +1284,8 @@ tris_end:
 .endif
 G_LIGHTTORDP_handler:
 G_SPNOOP_handler:
+G_MODIFYVTX_handler:
+G_MEMSET_handler:
 run_next_DL_command:
      lb     $7, (inputBufferEnd)(inputBufferPos)        // Command byte
     lpv     $v4[0], (inputBufferEndSgn)(inputBufferPos) // Whole command
@@ -2232,12 +2231,10 @@ vtx_constants_for_clip:
     ldv     sVPS[0], (viewport)($zero)            // Load vscale duplicated in 0-3 and 4-7
     vne     $v29, $v31, $v31[3h]                  // VCC = 11101110
     ldv     sVPS[8], (viewport)($zero)
-    lb      $11, geometryModeLabel + 3            // G_ATTROFFSET_ST_ENABLE in sign bit
     vmrg    sVPO, sVPO, sFOG[1]                   // Put fog offset in elements 3,7 of vtrans
     vmov    sSTS[4], sSTS[0]
     vmrg    sVPS, sVPS, sFOG[0]                   // Put fog multiplier in elements 3,7 of vscale
      lbu    $7, mvpValid
-    vclr    $v30
 .else
     lb      flagsV1, geometryModeLabel + 3    // G_ATTROFFSET_ST_ENABLE in sign bit
     lw      $11, (fogFactor)($zero)           // Load fog multiplier MSBs and offset LSBs
@@ -2261,7 +2258,7 @@ vtx_constants_for_clip:
 .endif
     vmov    sSTS[5], sSTS[1]
     bltz    inVtx, clip_after_constants             // inVtx < 0 means from clipping
-     lsv    $v30[6], (perspNorm - altBase)(altBaseReg) // Perspective norm elem 3
+     lqv     $v30, (fxParams - altBase)(altBaseReg)
 vtx_after_setup_constants:
     bnez    $7, @@skip_recalc_mvp
      lb     viLtFlag, pointLightFlag
@@ -2352,6 +2349,21 @@ vtx_loop_no_lighting:
     addi    vtxLeft, vtxLeft, -2*inputVtxSize // Decrement vertex count by 2
 vtx_return_from_lighting:
 vtx_return_from_texgen:
+aLightTmp1 equ s1WI
+aLightTmp3 equ sSCF
+aLightImpl:
+    lb $11, aLightAlpha2
+    // Mind that colors are bits 14..7. Bit 15 and all small bits are zerod out
+    luv       aLightTmp1[0], (aLight - altBase)(altBaseReg) // packed load mult
+    beqz $11, @@no_alight
+    vmudl     $v29, vpRGBA, $v30[6]         // acc = rgba*A ; aLightAlpha1
+    vmadl     $v29, aLightTmp1, $v30[7]     // acc = rgba*A + mult*B ; aLightAlpha2
+    vreadacc  aLightTmp3, ACC_LOWER         // the results in acc lower
+    veq       $v29, $v31, $v31[3h]          // Set VCC to 00010001
+    vmrg      vpRGBA, vpRGBA, aLightTmp3    // in vPairRGBA replace RGB coordinates with v16
+
+@@no_alight:
+
 vtx_store_for_clip:
     vmudl   $v29, vpClpF, $v30[3]       // Persp norm
     sub     $11, outVtx2, fogFlag       // Points 8 before outVtx2 if fog, else 0
@@ -2405,7 +2417,7 @@ vtx_store_for_clip:
     vmudm   $v29, vpST, sSTS       // Scale ST
     ldv     sTCL[8],   (VTX_IN_TC + 3 * inputVtxSize)(inVtx) // ST in 4:5, RGBA in 6:7
 // sST2 <- vpScrI
-    vmadh   sST2, vOne, $v30          // + 1 * ST offset; elems 0, 1, 4, 5
+    vmadh   sST2, vOne, $v31[2]          // + 1 * ST offset; elems 0, 1, 4, 5
     suv     vpRGBA[4],  (VTX_COLOR_VEC )(outVtx2) // Store RGBA for second vtx
     vmudl   $v29, s1WF, sRTF[2h]
     lsv     vpClpI[14], (VTX_Z_INT     )(outVtx2) // load Z into W slot, will be for fog below
@@ -3072,10 +3084,14 @@ G_SETOTHERMODE_L_handler:
     j       G_RDP_handler
      lpv    $v4[0], (otherMode0)($zero)
 
-G_MODIFYVTX_handler: // 3
-    mfc2    $10, $v7[6]  // Byte 3 = vtx being modified
-    j       do_moveword  // Moveword adds cmd_w0 to $10 for final addr
-     lbu    cmd_w0, (inputBufferEnd - 0x07)(inputBufferPos)  // offset in vtx, bit 15 clear
+G_ALIGHT_handler:
+    sw cmd_w1_dram, aLight
+    sw cmd_w1_dram, aLight+4
+    sh cmd_w0, aLightAlpha2
+    li $1, 0xff00
+    sub $2, $1, cmd_w0
+    j run_next_DL_command
+    sh $2, aLightAlpha1
 
 displaylist_dma_from_yield: // 2
     j       displaylist_dma_goto_next_ra
