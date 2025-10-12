@@ -173,7 +173,7 @@ $(eval $(call reset_vars))
 define rule_builder_final
   NAME := F3DEX3$(NAME_FINAL)
   DESCRIPTION := Will make you want to finally ditch HLE ($(OPTIONS_FINAL))
-  ID_STR := F3DEX3$(NAME_FINAL)$(VERSION) by Sauraen & Yoshitaka Yasumoto/Nintendo
+  ID_STR := F3DEX3_LVP$(NAME_FINAL)$(VERSION) by Sauraen & Yoshitaka Yasumoto/Nintendo
   OPTIONS := $(OPTIONS_FINAL)
   $$(eval $$(call ucode_rule))
 endef

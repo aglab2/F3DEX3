@@ -2704,6 +2704,8 @@ dump_dmem:
 
 load_overlays_2_3_4:
     addi    nextRA, $ra, -8  // Got here with jal, but want to return to addr of jal itself
+.notice ovl3_padded_end - ovl3_start
+.notice ovl2_padded_end - ovl2_start
 .notice min(ovl3_padded_end - ovl3_start, ovl2_padded_end - ovl2_start)
 .notice ovl234_end - ovl234_start
     li      dmaLen, min(ovl3_padded_end - ovl3_start, ovl2_padded_end - ovl2_start) - 1
