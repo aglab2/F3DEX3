@@ -3273,18 +3273,14 @@ ltbasic_setup_after_xfrm:
     // $v30  SOffs  TOffs  0/AOa  Persp  SOffs  TOffs  0x0020 0x0800
     lpv     vLTC[0], (ltBufOfs + 8 - lightSize)(ambLight) // First lt xfrmed dir in elems 4-6
     li      vLoopRet, ltbasic_start_standard
-    andi    $11, vGeomMid, (G_AMBOCCLUSION | G_PACKED_NORMALS | G_LIGHTTOALPHA | G_TEXTURE_GEN) >> 8
+    andi    $11, vGeomMid, (G_TEXTURE_GEN) >> 8
     vmov    $v30[2], $v31[2] // 0 as AO alpha offset
     vmov    vLTC[1], vLTC[6] // Move first lt Z to elem 1; watch stall on vLTC load
     beqz    $11, vtx_after_lt_setup  // None of the above features enabled
      li     lbAfter, vtx_return_from_lighting
-    andi    $11, vGeomMid, G_TEXTURE_GEN >> 8
-    beqz    $11, @@skip_texgen
-     andi   $10, vGeomMid, G_PACKED_NORMALS >> 8
-    li      lbAfter, -0x8000 | ltbasic_texgen // Negative is used as flag
 @@skip_texgen:
     j       vtx_after_lt_setup
-     nop
+     li     lbAfter, -0x8000 | ltbasic_texgen // Negative is used as flag
     
 .align 8
 xfrm_light_store_lookat:
