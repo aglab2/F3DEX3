@@ -1128,8 +1128,19 @@ start_padded_end:
 ovl01_end:
 
 G_POPMTX_handler:
+    lw      $11, matrixStackPtr             // Current matrix stack pointer
+    lw      $2, OSTask + OSTask_dram_stack  // Top of the stack
+    sub     cmd_w1_dram, $11, cmd_w1_dram   // Decrease pointer by amount in command
+    sub     $3, cmd_w1_dram, $2             // Is it still valid / within the stack?
+    bgez    $3, @@skip                      // If so, skip the failsafe
+     sh     $zero, mvpValid                 // and dirLightsXfrmValid; mark both mtx and dir lts invalid
+    move    cmd_w1_dram, $2                 // Use the top of the stack as the new pointer
+@@skip:
+    sw      cmd_w1_dram, matrixStackPtr     // Update the matrix stack pointer
+    j       do_movemem
+     li     $7, (-0x100 | G_MOVEMEM)        // As if came from G_MOVEMEM_handler, don't multiply
+
 G_DMA_IO_handler:
-    j       ovl234_ltbasic_entrypoint   // Delay slot is harmless
 G_BRANCH_WZ_handler:
      mfc2   $10, $v7[6]                 // Vertex addr (index was byte 3)
 .if CFG_G_BRANCH_W                      // G_BRANCH_W/G_BRANCH_Z difference; this defines F3DZEX vs. F3DEX2
@@ -1258,11 +1269,6 @@ G_LOADTILE_handler:
     j       cache_ltm
      sw     $zero, lastMatorTLUT // we are in large texture mode, forget cross img optimization
 
-mark_tlut_cached:
-    li     $1, lastMatAfterLUT-lastMatorTLUT
-    j      run_next_DL_command
-     sb    $1, matCache
-
 G_LOADTLUT_handler:
     lb     $3, matCache
     bltz   $3, mark_tlut_cached //fall to RDP handler
@@ -1332,7 +1338,7 @@ G_MTX_handler: // 12
     addi    perfCounterC, perfCounterC, 1  // Increment matrix count
 .endif
     andi    $11, cmd_w0, G_MTX_VP_M | G_MTX_NOPUSH_PUSH
-    beqz    $11, ovl234_ltbasic_entrypoint   // Model and push: go to overlay for push
+    beqz    $11, mtx_slow   // Model and push: go to overlay for push
      sh     $zero, mvpValid                  // Also zeroes dirLightsXfrmValid
 load_mtx: // Coming from mtx_push
     andi    $7, cmd_w0, G_MTX_MUL_LOAD       // Matrix load type: 2 is multiply, 0 is load
@@ -1407,14 +1413,6 @@ tPosMmH equ $v6
 tPosLmH equ $v8
 tPosHmM equ $v11
 tDaDyI equ $v27
-
-tri_decal_fix_z:
-    // Valid range of tHAtI = 0 to 7FFF, but most of the scene is large values
-    vmudh   $v29, vOne, vTRC_DO  // accum all elems = -DM/2
-    vmadm   $v25, tHAtI, vTRC_DM // elem 7 = (0 to DM/2-1) - DM/2 = -DM/2 to -1
-    vcr     tDaDyI, tDaDyI, $v25[7] // Clamp DzDyI (6) to <= -val or >= val; clobbers DzDyF (7)
-    j       tri_return_from_decal_fix_z
-     set_vcc_11110001 // Clobbered by vcr
 
 align_with_warning 8, "One instruction of padding before tris"
 
@@ -1838,6 +1836,24 @@ flush_rdp_buffer: // Prereq: dmemAddr = rdpCmdBufPtr - rdpCmdBufEndP1, or dmemAd
     j       dma_read_write
      addi   rdpCmdBufPtr, rdpCmdBufEndP1, -(RDP_CMD_BUFSIZE + 8)
 
+tri_decal_fix_z:
+    // Valid range of tHAtI = 0 to 7FFF, but most of the scene is large values
+    vmudh   $v29, vOne, vTRC_DO  // accum all elems = -DM/2
+    vmadm   $v25, tHAtI, vTRC_DM // elem 7 = (0 to DM/2-1) - DM/2 = -DM/2 to -1
+    vcr     tDaDyI, tDaDyI, $v25[7] // Clamp DzDyI (6) to <= -val or >= val; clobbers DzDyF (7)
+    j       tri_return_from_decal_fix_z
+     set_vcc_11110001 // Clobbered by vcr
+
+mtx_slow:
+    lw      cmd_w1_dram, matrixStackPtr     // Set up the DMA from dmem to rdram at the matrix stack pointer
+    li      dmemAddr, -0x8000 | mMatrix     // mMatrix, negative = write
+    jal     dma_read_write                  // DMA the current matrix from dmem to rdram
+     li     dmaLen, 0x0040 - 1              // Set the DMA length to the size of a matrix (minus 1 because DMA is inclusive)
+    addi    cmd_w1_dram, cmd_w1_dram, 0x40  // Increase the matrix stack pointer by the size of one matrix
+    sw      cmd_w1_dram, matrixStackPtr     // Update the matrix stack pointer
+    j       load_mtx
+     lw     cmd_w1_dram, (inputBufferEnd - 4)(inputBufferPos) // Load command word 1 again
+
 align_with_warning 8, "One instruction of padding before ovl234"
 
 vtx_select_lighting:
@@ -1879,53 +1895,8 @@ ovl234_clipmisc_entrypoint:
 .if CFG_PROFILING_B
     nop                                    // Needs to take up the space for the other perf counter
 .endif
-    bgez    $7, vtx_constants_for_clip     // $7 < 0: cmd byte. >= 0: vtx 2 clip flags with lhu.
+    j       vtx_constants_for_clip     // $7 < 0: cmd byte. >= 0: vtx 2 clip flags with lhu.
      li     inVtx, -0x8000                 // inVtx < 0 means from clipping. Inc'd each vtx write by 2 * inputVtxSize, but this is large enough it should stay negative.
-.if !(G_MEMSET & 0x80) || !(G_DMA_IO & 0x80)
-    .error "Command handlers in ovl3 < 0 assumption broken"
-.endif
-    lw      cmd_w1_dram, (inputBufferEnd - 4)(inputBufferPos) // Overwritten by overlay load
-    li      $3, -0x100 | G_DMA_IO
-    beq     $3, $7, g_dma_io_ovl3
-g_memset_ovl3: // otherwise
-     llv    $v2[0], (rdpHalf1Val - altBase)(altBaseReg) // Load the memset value
-    sll     cmd_w0, cmd_w0, 8           // Clear upper byte
-    jal     segmented_to_physical
-     srl    cmd_w0, cmd_w0, 8           // Number of bytes to memset (must be mult of 16)
-    li      $3, memsetBufferStart + 0x10 // Last qword set is memsetBufferStart
-    jal     @@clamp_to_memset_buffer
-     vmudh  $v2, vOne, $v2[1]           // Move element 1 (lower bytes) to all
-    addi    $2, $2, memsetBufferStart   // First qword set is one below end
-@@pre_loop:
-    sqv     $v2, (-0x10)($2)
-    bne     $2, $3, @@pre_loop
-     addi   $2, -0x10
-@@transaction_loop:
-    jal     @@clamp_to_memset_buffer
-     li     dmemAddr, -0x8000 | memsetBufferStart  // Always write from start of buffer
-    jal     dma_read_write
-     addi   dmaLen, $2, -1
-    sub     cmd_w0, cmd_w0, $2
-    bgtz    cmd_w0, @@transaction_loop
-     add    cmd_w1_dram, cmd_w1_dram, $2
-    j       while_wait_dma_busy
-     li     $ra, run_next_DL_command
-@@clamp_to_memset_buffer:
-    addi    $11, cmd_w0, -memsetBufferSize // $2 = min(cmd_w0, memsetBufferSize)
-    sra     $10, $11, 31
-    and     $11, $11, $10
-    jr      $ra
-     addi   $2, $11, memsetBufferSize
-    
-g_dma_io_ovl3:
-    jal     segmented_to_physical // Convert the provided segmented address (in cmd_w1_dram) to a virtual one
-     lh     dmemAddr, (inputBufferEnd - 0x07)(inputBufferPos) // Get the 16 bits in the middle of the command word (since inputBufferPos was already incremented for the next command)
-    andi    dmaLen, cmd_w0, 0x0FF8 // Mask out any bits in the length to ensure 8-byte alignment
-    li      nextRA, run_next_DL_command
-    j       dma_and_wait_goto_next_ra  // Trigger a DMA read or write, depending on the G_DMA_IO flag (which will occupy the sign bit of dmemAddr)
-     // At this point, dmemAddr's highest bit is the flag, it's next 13 bits are the DMEM address, and then it's last two bits are the upper 2 of size
-     // So an arithmetic shift right 2 will preserve the flag as being the sign bit and get rid of the 2 size bits, shifting the DMEM address to start at the LSbit
-     sra    dmemAddr, dmemAddr, 2
 
 // Each clip condition (clipping plane bit being checked) has three phases that
 // occur in this order: find an onscreen vertex, then find the transition from an
@@ -3104,6 +3075,11 @@ segmented_to_physical: // 8
     jr      $ra
      add    cmd_w1_dram, cmd_w1_dram, $11 // Add the segment's address to the masked input address, resulting in the virtual address
 
+mark_tlut_cached:
+    li     $1, lastMatAfterLUT-lastMatorTLUT
+    j      run_next_DL_command
+     sb    $1, matCache
+
 ovl1_end:
 align_with_warning 8, "One instruction of padding at end of ovl1"
 ovl1_padded_end:
@@ -3153,8 +3129,7 @@ ovl234_clipmisc_entrypoint_ovl2ver:        // same IMEM address as ovl234_clipmi
      li     cmd_w1_dram, orga(ovl3_start)  // set up a load for overlay 3
 
 ltbasic_continue_setup:
-    bltz    $7, ltbasic_command_handlers   // $7 < 0: cmd byte. >= 0: mtx valid (0 or 0x18)
-     addi   ambLight, ambLight, altBase    // Point to ambient light; stored through vtx proc
+    addi    ambLight, ambLight, altBase    // Point to ambient light; stored through vtx proc
     bnez    viLtFlag, ltbasic_setup_after_xfrm  // Skip if lights were valid
      addi   lbFakeAmb, ambLight, ltBufOfs  // Ptr to load amb light from; normally actual ambient light
 xfrm_dir_lights:
@@ -3466,36 +3441,6 @@ lLkDt1 equ lDOT    // lighting Lookat Dot product 1
      vmacf  vpST, dot0, dot1        // + ST squared * (ST + ST * coeff)
 .endmacro
      texgen_lastinstr lLkDt0, lLkDt1
-
-ltbasic_command_handlers:
-.if !(G_POPMTX & 0x80) || !(G_MTX & 0x80)
-    .error "Command handlers in ovl2 < 0 assumption broken"
-.endif
-    lw      cmd_w1_dram, (inputBufferEnd - 4)(inputBufferPos) // Overwritten by overlay load
-    li      $3, -0x100 | G_MTX
-    beq     $3, $7, g_mtx_push_ovl2
-g_popmtx_ovl2:  // otherwise
-     lw     $11, matrixStackPtr             // Current matrix stack pointer
-    lw      $2, OSTask + OSTask_dram_stack  // Top of the stack
-    sub     cmd_w1_dram, $11, cmd_w1_dram   // Decrease pointer by amount in command
-    sub     $3, cmd_w1_dram, $2             // Is it still valid / within the stack?
-    bgez    $3, @@skip                      // If so, skip the failsafe
-     sh     $zero, mvpValid                 // and dirLightsXfrmValid; mark both mtx and dir lts invalid
-    move    cmd_w1_dram, $2                 // Use the top of the stack as the new pointer
-@@skip:    
-    sw      cmd_w1_dram, matrixStackPtr     // Update the matrix stack pointer
-    j       do_movemem
-     li     $7, (-0x100 | G_MOVEMEM)        // As if came from G_MOVEMEM_handler, don't multiply
-
-g_mtx_push_ovl2:
-    lw      cmd_w1_dram, matrixStackPtr     // Set up the DMA from dmem to rdram at the matrix stack pointer
-    li      dmemAddr, -0x8000 | mMatrix     // mMatrix, negative = write
-    jal     dma_read_write                  // DMA the current matrix from dmem to rdram
-     li     dmaLen, 0x0040 - 1              // Set the DMA length to the size of a matrix (minus 1 because DMA is inclusive)
-    addi    cmd_w1_dram, cmd_w1_dram, 0x40  // Increase the matrix stack pointer by the size of one matrix
-    sw      cmd_w1_dram, matrixStackPtr     // Update the matrix stack pointer
-    j       load_mtx
-     lw     cmd_w1_dram, (inputBufferEnd - 4)(inputBufferPos) // Load command word 1 again
 
 ovl2_end:
 .align 8
