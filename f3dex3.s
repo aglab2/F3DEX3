@@ -434,8 +434,9 @@ vTRC_0100_addr equ (vTRCValue + 2 * 6)
 fxParams:
 // First 8 values here loaded with lqv.
 
+clipRatio:
 aoAmbientFactor:
-    .dh 0xFFFF
+    .dh 2
 aoDirectionalFactor:
     .dh 0xA000
 aoPointFactor:
@@ -2036,7 +2037,7 @@ cFadeOn   equ $v5
     ldv     cPosOnOfF[8], VTX_FRAC_VEC(clipVOffsc) // Off screen to elems 4-7
     bnez    $11, clip_w                  // If so, use 1 or -1
      ldv    cPosOnOfI[8], VTX_INT_VEC (clipVOffsc)
-    vmudh   cTemp, cTemp, $v31[3]        // elem 0 is (1 or -1) * 2 (clip ratio)
+    vmudh   cTemp, cTemp, $v30[0]        // elem 0 is (1 or -1) * 2 (clip ratio)
     andi    $11, clipMaskIdx, 2          // Conditions 2 (-x) or 3 (+x)
     vmudm   cBaseF, vOne, cPosOnOfF[0h]  // Set accumulator (care about 3, 7) to X
     bnez    $11, clip_skipy
@@ -2350,10 +2351,10 @@ vtx_store_for_clip:
     vmov    vpScrF[1], sCLZ[2]
     sbv     sFOG[7],  (VTX_COLOR_A + 8 - vtxSize)($11) // ...which gets overwritten below
 // sSCF <- lDOT
-    vmudn   sSCF, vpClpF, $v31[3]        // W * clip ratio for scaled clipping
+    vmudn   sSCF, vpClpF, $v30[0]        // W * clip ratio for scaled clipping
     ssv     sCLZ[12], (VTX_SCR_Z      )(outVtx2)
 // sSCI <- sFOG
-    vmadh   sSCI, vpClpI, $v31[3]        // W * clip ratio for scaled clipping
+    vmadh   sSCI, vpClpI, $v30[0]        // W * clip ratio for scaled clipping
     slv     vpScrI[8],  (VTX_SCR_VEC    )(outVtx2)
     vrcph   $v29[0], s1WI[3]
     slv     vpScrI[0],  (VTX_SCR_VEC    )(outVtx1)
@@ -2558,10 +2559,10 @@ vtx_store_for_clip:
 // sTCL <- vpLtTot
     ldv     sTCL[0],   (VTX_IN_TC + 0 * inputVtxSize)(inVtx) // ST in 0:1, RGBA in 2:3
 // sSCF <- vpScrF
-    vmudn   sSCF, vpClpF, $v31[3]       // W * clip ratio for scaled clipping
+    vmudn   sSCF, vpClpF, $v30[0]       // W * clip ratio for scaled clipping
     ssv     vpClpI[12], (tempVpRGBA + 14)(rdpCmdBufEndP1) // Second Z to W
 // sSCI <- vpScrI
-    vmadh   sSCI, vpClpI, $v31[3]       // W * clip ratio for scaled clipping
+    vmadh   sSCI, vpClpI, $v30[0]       // W * clip ratio for scaled clipping
     lsv     vpClpF[14], (VTX_Z_FRAC    )(outVtx2) // load Z into W slot, will be for fog below
     vmudl   $v29, s1WF, sRTF[2h]
     lqv     vpClpI, (tempVpRGBA)(rdpCmdBufEndP1) // Load int part with Z in W
