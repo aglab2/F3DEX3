@@ -456,8 +456,8 @@ fresnelOffset:
 aLightAlpha2:
     .dh 0x0000
 
-attrOffsetST:
-    .dh 0x0100
+attrOffsetZ:
+    .dh 0
     .dh 0xFF00
 
 alphaCompareCullMode:
@@ -2208,9 +2208,13 @@ vtx_constants_for_clip:
     vne     $v29, $v31, $v31[3h]                  // VCC = 11101110
     ldv     sVPS[8], (viewport)($zero)
     vmrg    sVPO, sVPO, sFOG[1]                   // Put fog offset in elements 3,7 of vtrans
+    lsv     $v30[0], (attrOffsetZ - altBase)(altBaseReg) // Z offset
     vmov    sSTS[4], sSTS[0]
+    vadd    $v30, sVPO, $v30[0]                   // Add Z offset to all terms (care about 2, 6)
     vmrg    sVPS, sVPS, sFOG[0]                   // Put fog multiplier in elements 3,7 of vscale
      lbu    $7, mvpValid
+    vne     $v29, $v31, $v31[2h] // Set VCC to 11011101
+    vmrg    sVPO, sVPO, $v30                      // Move Z + Z offset into elems 2, 6
 .else
     lb      flagsV1, geometryModeLabel + 3    // G_ATTROFFSET_ST_ENABLE in sign bit
     lw      $11, (fogFactor)($zero)           // Load fog multiplier MSBs and offset LSBs
