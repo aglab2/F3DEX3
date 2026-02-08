@@ -1141,18 +1141,7 @@ G_POPMTX_handler:
     j       do_movemem
      li     $7, (-0x100 | G_MOVEMEM)        // As if came from G_MOVEMEM_handler, don't multiply
 
-G_DMA_IO_handler:
 G_BRANCH_WZ_handler:
-     mfc2   $10, $v7[6]                 // Vertex addr (index was byte 3)
-.if CFG_G_BRANCH_W                      // G_BRANCH_W/G_BRANCH_Z difference; this defines F3DZEX vs. F3DEX2
-    lh      $10, VTX_W_INT($10)         // read the w coordinate of the vertex (f3dzex)
-.else
-    lw      $10, VTX_SCR_Z($10)         // read the screen z coordinate (int and frac) of the vertex (f3dex2)
-.endif
-    sub     $2, $10, cmd_w1_dram        // subtract the w/z value being tested
-    bgez    $2, run_next_DL_command     // if vtx.w/z >= cmd w/z, continue running this DL
-     lw     cmd_w1_dram, rdpHalf1Val    // load the RDPHALF1 value as the location to branch to
-    li      cmd_w0, -0x8000             // Bit 16 set (via negative) = nopush, bits 3-7 = 0 for hint
 G_DL_handler:
     sll     $2, cmd_w0, 15                  // Shifts the push/nopush value to the sign bit
     lbu     $7, displayListStackLength      // Get the DL stack length
@@ -1289,10 +1278,12 @@ tris_end:
 .endif
 .if ENABLE_PROFILING
 .endif
+G_ALIGHT_handler:
 G_LIGHTTORDP_handler:
 G_SPNOOP_handler:
 G_MODIFYVTX_handler:
 G_MEMSET_handler:
+G_DMA_IO_handler:
 run_next_DL_command:
      lb     $7, (inputBufferEnd)(inputBufferPos)        // Command byte
     lpv     $v4[0], (inputBufferEndSgn)(inputBufferPos) // Whole command
@@ -1324,15 +1315,6 @@ run_next_DL_command:
      addi   inputBufferPos, inputBufferPos, 0x0008      // increment the DL index by 2 words
     // $7 must retain the command byte for load_mtx and command dispatch in overlays 2 and 3
     // $ra must contain the handler called for several handlers
-
-G_ALIGHT_handler:
-    sw cmd_w1_dram, aLight
-    sw cmd_w1_dram, aLight+4
-    sh cmd_w0, aLightAlpha2
-    li $1, 0xff00
-    sub $2, $1, cmd_w0
-    j run_next_DL_command
-    sh $2, aLightAlpha1
 
 G_MTX_handler: // 12
 .if CFG_PROFILING_C
@@ -1855,16 +1837,106 @@ mtx_slow:
     j       load_mtx
      lw     cmd_w1_dram, (inputBufferEnd - 4)(inputBufferPos) // Load command word 1 again
 
+vtx_select_lighting:
+    // Figure out if we need to load any complex lighting
+    lbu     ambLight, numLightsxSize
+    andi    $11, vGeomMid, (G_TEXTURE_GEN) >> 8
+    beqz    viLtFlag, vtx_select_lighting_full  // Skip if lights were valid
+     addi   ambLight, ambLight, altBase    // Point to ambient light; stored through vtx proc
+    bnez    $11, vtx_select_lighting_full
+     addi   lbFakeAmb, ambLight, ltBufOfs  // Ptr to load amb light from; normally actual ambient light
+
+mubasic_setup_after_xfrm:
+    // Constants registers:
+    //       e0     e1     e2     e3     e4     e5     e6     e7
+    // vLTC  0xF800 Lt1 Z  AOAmb  AODir  Lt1 X  Lt1 Y  AOAmb  AODir
+    // $v30  SOffs  TOffs  0/AOa  Persp  SOffs  TOffs  0x0020 0x0800
+    lpv     vLTC[0], (ltBufOfs + 8 - lightSize)(ambLight) // First lt xfrmed dir in elems 4-6
+    li      vLoopRet, ltbasic_start_standard
+    vmov    $v30[2], $v31[2] // 0 as AO alpha offset
+    vmov    vLTC[1], vLTC[6] // Move first lt Z to elem 1; watch stall on vLTC load
+    j       vtx_after_lt_setup
+     li     lbAfter, vtx_return_from_lighting
+    
+.macro instan_lt_vec_1
+    vmadh   $v29, vMTX1I, vpMdl[1h]
+.endmacro
+.macro instan_lt_vec_2
+    vmadn   vpClpF, vMTX2F, vpMdl[2h]
+.endmacro
+.macro instan_lt_vec_3
+    vmadh   vpClpI, vMTX2I, vpMdl[2h]
+.endmacro
+
+.macro instan_lt_scl_1
+    andi    $10, $10, CLIP_SCAL_NPXY // Mask to only bits we care about
+.endmacro
+.macro instan_lt_scl_2
+    or      flagsV1, flagsV1, $10          // Combine results for first vertex
+.endmacro
+
+.macro instan_lt_vs_45
+    vge     sFOG, vpScrI, $v31[6]  // Clamp W/fog to >= 0x7F00 (low byte is used)
+    addi    vtxLeft, vtxLeft, -2*inputVtxSize // Decrement vertex count by 2
+    vge     sCLZ, vpScrI, $v31[2]              // 0; clamp Z to >= 0
+    sh      flagsV1, (VTX_CLIP      )(outVtx1) // Store first vertex flags
+.endmacro
+
+ltbasic_start_standard:
+    // Using elem 3, 7 for regular normals because packed normal results are there.
+    instan_lt_vec_1
+    lpv     vpNrmlX[3], (tempVpRGBA)(rdpCmdBufEndP1) // X to elem 3, 7
+    instan_lt_vec_2
+    lpv     vpNrmlY[2], (tempVpRGBA)(rdpCmdBufEndP1) // Y to elem 3, 7
+    instan_lt_vec_3
+    lpv     vpNrmlZ[1], (tempVpRGBA)(rdpCmdBufEndP1) // Z to elem 3, 7
+    vnop
+    luv     lVCI[0],    (tempVpRGBA)(rdpCmdBufEndP1) // Load vertex color input
+ltbasic_after_start:
+
+    vmulf   $v29,  vpNrmlX, vLTC[4] // Normals X elems 3, 7 * first light dir X
+// lDIR <- (NOC: -, Occ: sOTM)
+    lpv     lDIR[0], (ltBufOfs + 8 - 2*lightSize)(ambLight) // Xfrmed dir in elems 4-6; temp reg
+    vmacf   $v29,  vpNrmlY, vLTC[5] // Normals Y elems 3, 7 * first light dir Y
+    luv     vpLtTot,    (0)(lbFakeAmb)  // Total light level, init to ambient or zeros if AO
+// lDOT <- (NOC: vpMdl, Occ: sCLZ)
+    vmacf   lDOT, vpNrmlZ, vLTC[1] // Normals Z elems 3, 7 * first light dir Z
+    instan_lt_scl_1  // $11 can be used as a temporary, except b/w instan_lt_scl_1...
+    vsub    lVCI, lVCI, $v30[2] // Offset alpha for AO, or 0 normally
+    instan_lt_scl_2 // ...and instan_lt_scl_2
+// lCOL <- (Occ: sFOG here / NOC: sSCI earlier)
+    // vnop
+    beq     ambLight, altBaseReg, ltbasic_post
+     move   curLight, ambLight                   // Point to ambient light
+ltbasic_loop:
+    vge     lDTC, lDOT, $v31[2] // 0; clamp dot product to >= 0
+    vmulf   $v29,  vpNrmlX, lDIR[4] // Normals X elems 3, 7 * next light dir
+    luv     lCOL,   (ltBufOfs + 0 - 1*lightSize)(curLight) // Light color
+    vmacf   $v29,  vpNrmlY, lDIR[5] // Normals Y elems 3, 7 * next light dir
+    addi    curLight, curLight, -lightSize
+    vmacf   lDOT, vpNrmlZ, lDIR[6] // Normals Z elems 3, 7 * next light dir
+    lpv     lDIR[0], (ltBufOfs + 8 - 2*lightSize)(curLight) // Xfrmed dir in elems 4-6; DOES dual-issue
+    vmudh   $v29, vOne, vpLtTot // Load accum mid with current light level
+    bne     curLight, altBaseReg, ltbasic_loop
+     vmacf  vpLtTot, lCOL, lDTC[3h] // + light color * dot product
+ltbasic_post:
+// (NOC: sFOG here / Occ: vpClpI later) <- lCOL
+    instan_lt_vs_45
+    vne     $v29, $v31, $v31[3h]           // Set VCC to 11101110
+    jr      lbAfter
+// vpRGBA <- lDIR
+     vmrg   vpRGBA, vpLtTot, lVCI  // RGB = light, A = vtx alpha
+
 align_with_warning 8, "One instruction of padding before ovl234"
 
-vtx_select_lighting:
+vtx_select_lighting_full:
 .if CFG_PROFILING_B
     srl     $11, vtxLeft, 4                  // Vertex count
     add     perfCounterA, perfCounterA, $11  // Add to number of lit vertices
 .endif
 
 .if (. & 4)
-    .error "vtx_select_lighting must be an even number of instructions"
+    .error "vtx_select_lighting_full must be an even number of instructions"
 .endif
 ovl234_start:
 
@@ -2328,20 +2400,8 @@ vtx_loop_no_lighting:
     addi    vtxLeft, vtxLeft, -2*inputVtxSize // Decrement vertex count by 2
 vtx_return_from_lighting:
 vtx_return_from_texgen:
-aLightTmp1 equ s1WI
-aLightTmp3 equ sSCF
-aLightImpl:
-    lb $11, aLightAlpha2
-    // Mind that colors are bits 14..7. Bit 15 and all small bits are zerod out
-    luv       aLightTmp1[0], (aLight - altBase)(altBaseReg) // packed load mult
-    beqz $11, @@no_alight
-    vmudl     $v29, vpRGBA, $v30[6]         // acc = rgba*A ; aLightAlpha1
-    vmadl     $v29, aLightTmp1, $v30[7]     // acc = rgba*A + mult*B ; aLightAlpha2
-    vreadacc  aLightTmp3, ACC_LOWER         // the results in acc lower
-    veq       $v29, $v31, $v31[3h]          // Set VCC to 00010001
-    vmrg      vpRGBA, vpRGBA, aLightTmp3    // in vPairRGBA replace RGB coordinates with v16
 
-@@no_alight:
+// alight was here...
 
 vtx_store_for_clip:
     vmudl   $v29, vpClpF, $v30[3]       // Persp norm
@@ -3276,29 +3336,8 @@ xfrm_light_store_lookat:
 
 .if CFG_NO_OCCLUSION_PLANE
 
-.macro instan_lt_vec_1
-    vmadh   $v29, vMTX1I, vpMdl[1h]
-.endmacro
-.macro instan_lt_vec_2
-    vmadn   vpClpF, vMTX2F, vpMdl[2h]
-.endmacro
-.macro instan_lt_vec_3
-    vmadh   vpClpI, vMTX2I, vpMdl[2h]
-.endmacro
 // lDOT <- vpMdl
-.macro instan_lt_scl_1
-    andi    $10, $10, CLIP_SCAL_NPXY // Mask to only bits we care about
-.endmacro
-.macro instan_lt_scl_2
-    or      flagsV1, flagsV1, $10          // Combine results for first vertex
-.endmacro
 // sFOG <- lCOL
-.macro instan_lt_vs_45
-    vge     sFOG, vpScrI, $v31[6]  // Clamp W/fog to >= 0x7F00 (low byte is used)
-    addi    vtxLeft, vtxLeft, -2*inputVtxSize // Decrement vertex count by 2
-    vge     sCLZ, vpScrI, $v31[2]              // 0; clamp Z to >= 0
-    sh      flagsV1, (VTX_CLIP      )(outVtx1) // Store first vertex flags
-.endmacro
 
 .else
 
@@ -3342,66 +3381,6 @@ ltbasic_start_packed:
     vmudn   vpNrmlY, vpMdl, $v30[6]  // (1 << 5) = 0x0020; left shift normals Y
     j       ltbasic_after_start
      vmudn  vpNrmlZ, vpMdl, $v30[7]  // (1 << 11) = 0x0800; left shift normals Z
-
-.align 8
-ltbasic_start_standard:
-    // Using elem 3, 7 for regular normals because packed normal results are there.
-    instan_lt_vec_1
-    lpv     vpNrmlX[3], (tempVpRGBA)(rdpCmdBufEndP1) // X to elem 3, 7
-    instan_lt_vec_2
-    lpv     vpNrmlY[2], (tempVpRGBA)(rdpCmdBufEndP1) // Y to elem 3, 7
-    instan_lt_vec_3
-    lpv     vpNrmlZ[1], (tempVpRGBA)(rdpCmdBufEndP1) // Z to elem 3, 7
-    vnop
-    luv     lVCI[0],    (tempVpRGBA)(rdpCmdBufEndP1) // Load vertex color input
-ltbasic_after_start:
-
-.if CFG_DEBUG_NORMALS
-.warning "Debug normals visualization is enabled"
-    vmudh   vpNrmlX, vOne, vpNrmlX[3h] // Move X to all elements
-    vne     $v29, $v31, $v31[1h] // Set VCC to 10111011
-    vmrg    vpNrmlX, vpNrmlX, vpNrmlY[3h] // X in 0, 4; Y to 1, 5
-    vne     $v29, $v31, $v31[2h] // Set VCC to 11011101
-    vmrg    vpNrmlX, vpNrmlX, vpNrmlZ[3h] // Z to 2, 6
-    vmudh   $v29, vOne, $v31[5] // 0x4000; middle gray
-    j       vtx_return_from_lighting
-     vmacf  vpRGBA, vpNrmlX, $v31[5] // 0x4000; + 0.5 * normal
-.else // CFG_DEBUG_NORMALS
-
-    vmulf   $v29,  vpNrmlX, vLTC[4] // Normals X elems 3, 7 * first light dir X
-// lDIR <- (NOC: -, Occ: sOTM)
-    lpv     lDIR[0], (ltBufOfs + 8 - 2*lightSize)(ambLight) // Xfrmed dir in elems 4-6; temp reg
-    vmacf   $v29,  vpNrmlY, vLTC[5] // Normals Y elems 3, 7 * first light dir Y
-    luv     vpLtTot,    (0)(lbFakeAmb)  // Total light level, init to ambient or zeros if AO
-// lDOT <- (NOC: vpMdl, Occ: sCLZ)
-    vmacf   lDOT, vpNrmlZ, vLTC[1] // Normals Z elems 3, 7 * first light dir Z
-    instan_lt_scl_1  // $11 can be used as a temporary, except b/w instan_lt_scl_1...
-    vsub    lVCI, lVCI, $v30[2] // Offset alpha for AO, or 0 normally
-    instan_lt_scl_2 // ...and instan_lt_scl_2
-// lCOL <- (Occ: sFOG here / NOC: sSCI earlier)
-    // vnop
-    beq     ambLight, altBaseReg, ltbasic_post
-     move   curLight, ambLight                   // Point to ambient light
-ltbasic_loop:
-    vge     lDTC, lDOT, $v31[2] // 0; clamp dot product to >= 0
-    vmulf   $v29,  vpNrmlX, lDIR[4] // Normals X elems 3, 7 * next light dir
-    luv     lCOL,   (ltBufOfs + 0 - 1*lightSize)(curLight) // Light color
-    vmacf   $v29,  vpNrmlY, lDIR[5] // Normals Y elems 3, 7 * next light dir
-    addi    curLight, curLight, -lightSize
-    vmacf   lDOT, vpNrmlZ, lDIR[6] // Normals Z elems 3, 7 * next light dir
-    lpv     lDIR[0], (ltBufOfs + 8 - 2*lightSize)(curLight) // Xfrmed dir in elems 4-6; DOES dual-issue
-    vmudh   $v29, vOne, vpLtTot // Load accum mid with current light level
-    bne     curLight, altBaseReg, ltbasic_loop
-     vmacf  vpLtTot, lCOL, lDTC[3h] // + light color * dot product
-ltbasic_post:
-// (NOC: sFOG here / Occ: vpClpI later) <- lCOL
-    instan_lt_vs_45
-    vne     $v29, $v31, $v31[3h]           // Set VCC to 11101110
-    jr      lbAfter
-// vpRGBA <- lDIR
-     vmrg   vpRGBA, vpLtTot, lVCI  // RGB = light, A = vtx alpha
-
-.endif // CFG_DEBUG_NORMALS
 
 ltbasic_texgen:
 // Texgen: in vpNrmlX:Y:Z; temps vpLtTot, lDOT, lDTC; out vpST.
