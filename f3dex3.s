@@ -1839,6 +1839,7 @@ mtx_slow:
 
 vtx_select_lighting:
     // Figure out if we need to load any complex lighting
+    lb      viLtFlag, dirLightsXfrmValid
     lbu     ambLight, numLightsxSize
     andi    $11, vGeomMid, (G_TEXTURE_GEN) >> 8
     beqz    viLtFlag, vtx_select_lighting_full  // Skip if lights were valid
